@@ -2,8 +2,8 @@ from .Node import Node
 
 class Queue:
     def __init__(self) -> None:
-        self.Head = None
-        self.Tail = None
+        self.Head: Node = None
+        self.Tail: Node = None
         self.Size = 0
 
     def enqueue(self, val):
@@ -13,6 +13,9 @@ class Queue:
         else:
             self.Tail.Next = val
             self.Tail = val
+    
+    def dequeue(self):
+        self.Tail = self.Tail.Prev
 
     
     def Size(self, val):
