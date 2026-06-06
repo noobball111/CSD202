@@ -7,8 +7,8 @@ class Stack:
     def push(self, val) -> None:
         self.arr.append(val)
     
-    def pop(self, val):
-        self.arr.pop(-1)
+    def pop(self):
+        return self.arr.pop(-1)
 
 
     # Attribute
