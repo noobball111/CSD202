@@ -1,6 +1,6 @@
-from ..Utils import CustomInput
-from ..Utils.Signal import Signal
+from Utils import CustomInput
+from Utils.Signal import Signal
 
 class Init:
-    def __init__(self, SERVICES):
-        self._SERVICES = SERVICES
+    def __init__(self, CONTROLLERS):
+        self._CONTROLLERS = CONTROLLERS
