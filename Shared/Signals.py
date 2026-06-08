@@ -4,7 +4,7 @@ from Utils.Signal import Signal
 @dataclass
 class SignalsContainer:
     ItemAdded: Signal = Signal.new()
-    ItemDeleting: Signal = Signal.new()
+    ItemRemoving: Signal = Signal.new()
     ItemEdited: Signal = Signal.new()
     OrderProcessed: Signal = Signal.new()
     

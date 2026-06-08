@@ -1,3 +1,9 @@
+from typing import TYPE_CHECKING
+
+# prevent circular import loops at runtime
+if TYPE_CHECKING:
+    from Controller.Initializer import ServiceRegistry
+
 from Utils import CustomInput
 from Utils.Signal import Signal
 

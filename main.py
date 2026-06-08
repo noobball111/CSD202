@@ -10,4 +10,6 @@ Controller = ControllerLoader.load()
 # That is why you should assign a ref
 OrderController = Controller.OrderController.OrderController
 
+# DO NOT CALL Init() Controller.<Module>.Init()
+
 OrderController.test("abc")

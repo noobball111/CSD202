@@ -20,8 +20,26 @@ class Queue:
         self.size += 1
     
     def dequeue(self):
-        self.Tail = self.Tail.Prev
+        self.Head = self.Head.Prev
 
     
+    def RemoveByAttribute(self, attr, val):
+        curr = self.Head
+
+        # while curr.val.OrderID != OrderID:
+        while getattr(curr.val, attr) != val:
+            curr = curr.Prev
+
+        if curr == self.Head:
+            self.dequeue()
+        elif curr == self.Tail:
+            self.Tail = self.Tail.Next
+            self.Tail.Prev = None
+        else:
+            curr.Next.Prev = curr.Prev
+            curr.Prev.Next = curr.Next
+        
+        self.size -= 1
+
     def Size(self, val):
         return self.size
