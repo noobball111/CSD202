@@ -1,6 +1,10 @@
-from Utils import CustomInput # type: ignore
-from Utils.Signal import Signal # type: ignore
+from Utils import CustomInput
+from Utils.Signal import Signal
+
+Module = None
 
 class Init:
-    def __init__(self, SERVICES):
-        self._SERVICES = SERVICES
+    def __init__(self, CONTROLLERS):
+        global Module
+        self._CONTROLLERS = CONTROLLERS
+        Module = self
