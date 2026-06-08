@@ -1,3 +1,6 @@
+# DO NOT MODIFY THIS IF YOU DO NOT UNDERSTAND WHAT ARE YOU DONIG
+
+
 import pkgutil
 import sys
 import importlib
@@ -17,13 +20,11 @@ class Init:
             modules_found.append(module_name)
             full_module_name = f"{CURRENT_PACKAGE}.Modules.{module_name}"
             
-            if full_module_name not in sys.modules:
-                importlib.import_module(full_module_name)
+            if full_module_name not in sys.modules: importlib.import_module(full_module_name)
                 
             module = sys.modules[full_module_name]
             
-            if hasattr(module, "Init"):
-                module.Init(ModulesPackage)
+            if hasattr(module, "Init"): module.Init(ModulesPackage)
 
         cls._generate_stub(modules_found)
         return ModulesPackage
