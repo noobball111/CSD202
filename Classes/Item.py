@@ -13,13 +13,16 @@ class Item:
         self.Expiration = Exp
         self.Stock = Amount
         self.UPC = UPC
-        self.SKU = None
         self.Type = "Item"
         self.Amount = 0
-
-    def GenerateSKU(self) -> str | None:
         self.SKU = GenerateSKU(self)
-        return self.SKU
+
+    # def GenerateSKU(self) -> str | None:
+    #     self.SKU = GenerateSKU(self)
+    #     return self.SKU
+    
+    def GetSearchToken(self) -> str:
+        return f"{self.UPC}{self.SKU}{self.Name}{self.Category}{self.Stock}{self.Type}{self.Amount}"
 
 class Clothes(Item):
     def __init__(self, Name, Category, Exp, Amount, UPC: int, Size, Color):
