@@ -6,17 +6,33 @@ from Utils.Signal import Signal
 
 from Classes import Item
 
-
-selected_idx = 0
+ItemTypes = ["Item", "Clothes"]
 
 class MainApp:
     def __init__(self):
-        self.filter = imgui.TextFilter()
+        self.Filter = imgui.TextFilter()
+        self.ToBeItems = []
 
-    def draw(self):
-        self.filter.draw('Search ("incl,-excl") ("error")', em_size(25))
+    def Draw(self):
+        self.Filter.draw('Search ("incl,-excl") ("error")', em_size(25))
 
-        imgui.button("Add Product")
+        if imgui.button("Add Product"):
+            self.ToBeItems.append({
+                "Name": "",
+                "TypeIndex": 0,
+            })
+
+        for toBeItem in self.ToBeItems:
+            imgui.push_id("Enter name")
+
+            imgui.set_next_item_width(em_size(5))
+            changed, toBeItem["Name"] = imgui.input_text("Enter name", toBeItem["Name"])
+
+            imgui.same_line()
+            _, toBeItem["TypeIndex"] = imgui.combo("Type", toBeItem["TypeIndex"], ItemTypes)
+            
+            imgui.pop_id()
+
         imgui.button("Remove Product")
     
         
@@ -26,6 +42,6 @@ class Init:
         self.MainApp = MainApp()
 
         def gui():
-            self.MainApp.draw()
+            self.MainApp.Draw()
 
         hello_imgui.run(gui, window_title="Warehouse Management System")
