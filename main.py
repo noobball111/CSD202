@@ -9,7 +9,9 @@ Controller = ControllerLoader.load()
 # Originally, it was OrderController.Module if you follow the template, so it could be anything
 # That is why you should assign a ref
 OrderController = Controller.OrderController.OrderController
+UIController = Controller.UIController.Module
 
 # DO NOT CALL Init() Controller.<Module>.Init()
 
 OrderController.test("abc")
+UIController.start()

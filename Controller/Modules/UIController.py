@@ -1,12 +1,34 @@
-from Packages.imgui import imgui, hello_imgui
+from Packages.imgui.imgui_bundle import imgui, hello_imgui, em_to_vec2, em_size
+from typing import TYPE_CHECKING
+
+# prevent circular import loops at runtime
+if TYPE_CHECKING:
+    from Controller.Initializer import ServiceRegistry
+
+from Utils import CustomInput
+from Utils.Signal import Signal
+
+Module = None
 
 selected_idx = 0
-items = ["Apple", "Banana", "Cherry"]
 
-def gui():
-    global selected_idx
-    imgui.text("Choose a fruit:")
-    _, selected_idx = imgui.list_box("##fruits", selected_idx, items)
-    imgui.text(f"You selected: {items[selected_idx]}")
+class MainApp:
+    def __init__(self):
+        self.filter = imgui.TextFilter()
 
-hello_imgui.run(gui, window_title="Fruit Picker")
+    def draw(self):
+        self.filter.draw('Filter ("incl,-excl") ("error")', em_size(50))
+
+class Init:
+    def __init__(self, CONTROLLERS):
+        global Module
+        self._CONTROLLERS = CONTROLLERS
+        Module = self
+
+        self.MainApp = MainApp()
+            
+    def start(self):
+        def gui():
+            self.MainApp.draw()
+
+        hello_imgui.run(gui, window_title="Warehouse Management System")
