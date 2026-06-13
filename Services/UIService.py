@@ -1,14 +1,9 @@
 from Packages.imgui.imgui_bundle import imgui, hello_imgui, em_to_vec2, em_size
 from typing import TYPE_CHECKING
 
-# prevent circular import loops at runtime
-if TYPE_CHECKING:
-    from Controller.Initializer import ServiceRegistry
-
 from Utils import CustomInput
 from Utils.Signal import Signal
 
-Module = None
 
 selected_idx = 0
 
