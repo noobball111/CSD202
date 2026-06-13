@@ -1,10 +1,5 @@
 from typing import TYPE_CHECKING
 
-# prevent circular import loops at runtime
-if TYPE_CHECKING:
-    from Services.Initializer import ServiceRegistry as ServicesRegistery
-    from Controller.Initializer import ServiceRegistry as ControllersRegistery
-
 from Utils import CustomInput
 from Utils.Signal import Signal
 
@@ -12,7 +7,6 @@ from Shared.Signals import Signals
 
 from Classes import Item
 
-Module = None
 Items = {}
 
 CategoryOrder = {}
@@ -94,26 +88,12 @@ Products: list[dict[str, str]] = []
 indexer = InvertedIndexSearch(Products)
 # res2 = indexer.search(search_query)
 
-Controllers: ControllersRegistery
-Services: ServicesRegistery
 
 class Init:
-    def __init__(self, SERVICES: ServicesRegistery, CONTROLLERS: ControllersRegistery):
-        global Controllers
-        global Services
-        Controllers = CONTROLLERS
-        Services = SERVICES
-
-        global Module
-        self._SERVICES = SERVICES
-        Module = self
-
+    def __init__(self):
         self.Items = Items
     
     # def Add(self, Type: str, Name: str, Category: str, Exp: int, Amount: int, UPC: int|None = None, *args):
-
-    def test(self):
-        Controllers.StorageController.Module.test()
 
     def Add(self, newItem: Item.Item):
 
@@ -183,11 +163,14 @@ class Init:
             Item.Stock += Amount*-1
 
 def Edit(Item, attr, val):
-    if not Module: return
+    # if not Module: return
 
-    Module.Edit(Item, attr, val)
+    # Module.Edit(Item, attr, val)
+
+    Signals.StorageManager.Edit.Fire(Item, attr, val)
 
 def AddStock(Item, Amount):
-    if not Module: return
+    # if not Module: return
 
-    Module.AddStock(Item, Amount)
+    # Module.AddStock(Item, Amount)
+    Signals.StorageManager.AddStock.Fire(Item, Amount)
