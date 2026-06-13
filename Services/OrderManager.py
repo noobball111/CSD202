@@ -2,7 +2,8 @@ from typing import TYPE_CHECKING
 
 # prevent circular import loops at runtime
 if TYPE_CHECKING:
-    from Services.Initializer import ServiceRegistry
+    from Services.Initializer import ServiceRegistry as ServicesRegistery
+    from Controller.Initializer import ServiceRegistry as ControllersRegistery
 
 from Utils import CustomInput
 from Utils.Signal import Signal
@@ -15,19 +16,17 @@ from Classes.Order import Order as OrderClass
 from Shared.Signals import Signals
 
 # Module = None
-CONTROLLERS: ServiceRegistry = None
+CONTROLLERS: ServicesRegistery
 
 newQueue = Queue()
 OrderLookUp = {}
 ItemLookUp = {}
 
 class Init:
-    def __init__(self, Controllers: ServiceRegistry):
+    def __init__(self, SERVICES, CONTROLLERS):
         global Module
-        global CONTROLLERS
-        self.CONTROLLERS = Controllers
-        CONTROLLERS = Controllers
-        # Module = self
+        self._SERVICES = SERVICES
+        Module = self
 
         self.Queue = Queue
 
@@ -60,7 +59,7 @@ def ItemRemoving(Item):
     Orders = OrderLookUp[Item.SKU]
 
     for order in Orders:
-        Queue.Remove(order)
+        Queue.RemoveByAttribute(order)
 
 # should never run
 def ItemRemoved(Item):

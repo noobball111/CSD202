@@ -10,6 +10,7 @@ ModulesPackage = importlib.import_module(f"{CURRENT_PACKAGE}.Modules")
 class Init:
     @classmethod
     def load(cls):
+        cls.Services = None
         package_path = ModulesPackage.__path__
         modules_found = []
         
@@ -22,11 +23,12 @@ class Init:
                 
             module = sys.modules[full_module_name]
             
-            if hasattr(module, "Init"):
-                module.Init(ModulesPackage)
+            # if hasattr(module, "Init"): module.Init(cls.Services)
+            if hasattr(module, "Init"): module.Init(ModulesPackage, cls.Services)
 
         cls._generate_stub(modules_found)
-        return ModulesPackage
+        cls.Modules = ModulesPackage
+        return cls
 
     @classmethod
     def _generate_stub(cls, modules):

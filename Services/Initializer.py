@@ -1,4 +1,4 @@
-# DO NOT MODIFY THIS IF YOU DO NOT UNDERSTAND WHAT ARE YOU DONIG
+    # DO NOT MODIFY THIS IF YOU DO NOT UNDERSTAND WHAT ARE YOU DONIG
 
 
 import pkgutil
@@ -13,6 +13,7 @@ ModulesPackage = importlib.import_module(f"{CURRENT_PACKAGE}.Modules")
 class Init:
     @classmethod
     def load(cls):
+        cls.Controllers = None
         package_path = ModulesPackage.__path__
         modules_found = []
         
@@ -24,10 +25,11 @@ class Init:
                 
             module = sys.modules[full_module_name]
             
-            if hasattr(module, "Init"): module.Init(ModulesPackage)
+            if hasattr(module, "Init"): module.Init(ModulesPackage, cls.Controllers)
 
         cls._generate_stub(modules_found)
-        return ModulesPackage
+        cls.Modules = ModulesPackage
+        return cls
 
     @classmethod
     def _generate_stub(cls, modules):

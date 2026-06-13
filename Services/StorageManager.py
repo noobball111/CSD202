@@ -2,7 +2,8 @@ from typing import TYPE_CHECKING
 
 # prevent circular import loops at runtime
 if TYPE_CHECKING:
-    from Services.Initializer import ServiceRegistry
+    from Services.Initializer import ServiceRegistry as ServicesRegistery
+    from Controller.Initializer import ServiceRegistry as ControllersRegistery
 
 from Utils import CustomInput
 from Utils.Signal import Signal
@@ -93,24 +94,38 @@ Products: list[dict[str, str]] = []
 indexer = InvertedIndexSearch(Products)
 # res2 = indexer.search(search_query)
 
+Controllers: ControllersRegistery
+Services: ServicesRegistery
 
 class Init:
-    def __init__(self, CONTROLLERS):
+    def __init__(self, SERVICES: ServicesRegistery, CONTROLLERS: ControllersRegistery):
+        global Controllers
+        global Services
+        Controllers = CONTROLLERS
+        Services = SERVICES
+
         global Module
-        self._CONTROLLERS = CONTROLLERS
+        self._SERVICES = SERVICES
         Module = self
 
         self.Items = Items
     
-    def Add(self, Type: str, Name: str, Category: str, Exp: int, Amount: int, UPC: int|None = None, *args):
-        TargetClass = getattr(Item, Type)
-        newItem: Item.Item = TargetClass(Name, Category, Exp, Amount, UPC, args)
-        newSKU = newItem.GenerateSKU()
-        
-        if self.Existed(newSKU):
-            Item = self.Existed(newSKU)
+    # def Add(self, Type: str, Name: str, Category: str, Exp: int, Amount: int, UPC: int|None = None, *args):
 
-            self.AddStock(Item, Amount)
+    def test(self):
+        Controllers.StorageController.Module.test()
+
+    def Add(self, newItem: Item.Item):
+
+
+        # TargetClass = getattr(Item, Type)
+        # newItem: Item.Item = TargetClass(Name, Category, Exp, Amount, UPC, args)
+        # newSKU = newItem.GenerateSKU()
+
+        if self.Existed(newItem.SKU):
+            oldItem: Item.Item = self.Existed(newItem.SKU)
+
+            self.AddStock(oldItem, newItem.Amount)
             
         else:
             try:
@@ -126,15 +141,15 @@ class Init:
             LookUpbySKU[newItem.SKU] = [newItem]
             LookUpbyUPC[newItem.SKU] = [newItem]
 
-            indexer.add_product(newItem.UPC, newItem.Name)
+            indexer.add_product(newItem.Name)
 
             # Signals.ItemAdded.Fire(newItem, Amount)
         
-        Signals.ItemAdded.Fire(newItem, Amount)
+        Signals.ItemAdded.Fire(newItem, newItem.Amount)
 
 
-    def Existed(self, SKU: str | None):
-        return self.Items.get(SKU)
+    def Existed(self, SKU: str | None) -> Item.Item:
+        return self.Items.get(SKU) # pyright: ignore[reportReturnType]
 
     def Remove(self, Item: Item.Item):
         Signals.ItemRemoving.Fire(Item)

@@ -15,6 +15,7 @@ class Item:
         self.UPC = UPC
         self.SKU = None
         self.Type = "Item"
+        self.Amount = 0
 
     def GenerateSKU(self) -> str | None:
         self.SKU = GenerateSKU(self)
