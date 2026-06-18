@@ -125,14 +125,14 @@ class Init:
 
             # Signals.ItemAdded.Fire(newItem, Amount)
         
-        Signals.ItemAdded.Fire(newItem, newItem.Amount)
+        Signals.Item.Added.Fire(newItem, newItem.Amount)
 
 
     def Existed(self, SKU: str | None) -> Item.Item:
         return self.Items.get(SKU) # pyright: ignore[reportReturnType]
 
     def Remove(self, Item: Item.Item):
-        Signals.ItemRemoving.Fire(Item)
+        Signals.Item.Removing.Fire(Item)
 
         CategoryOrder[Item.Category].remove(Item)
         LookUpByName[Item.Name].remove(Item)
@@ -167,10 +167,10 @@ def Edit(Item, attr, val):
 
     # Module.Edit(Item, attr, val)
 
-    Signals.StorageManager.Edit.Fire(Item, attr, val)
+    Signals.Item.Edit.Fire(Item, attr, val)
 
 def AddStock(Item, Amount):
     # if not Module: return
 
     # Module.AddStock(Item, Amount)
-    Signals.StorageManager.AddStock.Fire(Item, Amount)
+    Signals.Item.AddStock.Fire(Item, Amount)
