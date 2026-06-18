@@ -49,7 +49,8 @@ def ItemRemoving(Item):
     Orders = OrderLookUp[Item.SKU]
 
     for order in Orders:
-        Queue.RemoveByAttribute(order)
+        # Queue.RemoveByAttribute(order)
+        pass
 
 # should never run
 def ItemRemoved(Item):

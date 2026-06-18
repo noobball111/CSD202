@@ -13,13 +13,13 @@ from Classes.Stack import Stack
 
 # Module = None
 
-class Init:
+class FileLoader:
     def __init__(self):
         self.Loaded = {}
 
-    def Load(self, file):
+    def Load(self, filePath: str):
 
-        file =  open(file, "r")
+        file =  open(filePath, "r")
 
         for line in file.readlines():
             line = line.strip()

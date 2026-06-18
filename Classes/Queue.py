@@ -22,7 +22,8 @@ class Queue:
     def dequeue(self):
         self.Head = self.Head.Prev
 
-    
+    # Don't call this yet
+    # TODO: it is missing some features but I forgot
     def RemoveByAttribute(self, attr, val):
         curr = self.Head
 

@@ -18,6 +18,7 @@ class ItemSignals:
 
     # Method
     AddStock: Signal = Signal.new()
+    Edit: Signal = Signal.new()
 
 @dataclass
 class SignalsContainer:
