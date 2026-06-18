@@ -1,4 +1,4 @@
-from Packages.imgui.imgui_bundle import imgui, hello_imgui, em_to_vec2, em_size
+from imgui_bundle import imgui, hello_imgui, em_to_vec2, em_size
 from typing import TYPE_CHECKING
 
 from Utils import CustomInput

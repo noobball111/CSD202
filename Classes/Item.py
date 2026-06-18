@@ -7,10 +7,10 @@ def GenerateSKU(ItemClass) -> str | None:
     return None
 
 class Item:
-    def __init__(self, Name, Category, Exp, Amount, UPC: int|None = None) -> None:
+    def __init__(self, Name, Category, ExpirationDate, Amount, UPC: int|None = None) -> None:
         self.Name = Name
         self.Category = Category
-        self.Expiration = Exp
+        self.Expiration = ExpirationDate
         self.Stock = Amount
         self.UPC = UPC
         self.Type = "Item"
@@ -21,7 +21,7 @@ class Item:
     #     self.SKU = GenerateSKU(self)
     #     return self.SKU
     
-    def GetSearchToken(self) -> str:
+    def GenerateSearchToken(self) -> str:
         return f"{self.UPC}{self.SKU}{self.Name}{self.Category}{self.Stock}{self.Type}{self.Amount}"
 
 class Clothes(Item):
