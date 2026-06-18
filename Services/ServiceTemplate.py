@@ -5,12 +5,14 @@ from Utils.Signal import Signal
 
 from Shared.Signals import Signals
 
+from Classes.Item import Item
+from Classes.Node import Node
+from Classes.Order import Order
+from Classes.Queue import Queue
+from Classes.Stack import Stack
+
 # Module = None
 
 class Init:
     def __init__(self):
-        global Controllers
-        global Services
-
-        global Module
-        # Module = self
+        pass

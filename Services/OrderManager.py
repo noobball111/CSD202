@@ -1,10 +1,5 @@
 from typing import TYPE_CHECKING
 
-# prevent circular import loops at runtime
-if TYPE_CHECKING:
-    from Services.Initializer import ServiceRegistry as ServicesRegistery
-    from Controller.Initializer import ServiceRegistry as ControllersRegistery
-
 from Utils import CustomInput
 from Utils.Signal import Signal
 
@@ -14,9 +9,6 @@ from Classes.Node import Node
 from Classes.Order import Order as OrderClass
 
 from Shared.Signals import Signals
-
-# Module = None
-CONTROLLERS: ServicesRegistery
 
 newQueue = Queue()
 OrderLookUp = {}
@@ -38,7 +30,8 @@ def ProcessOrder(Order: OrderClass):
     # Once an order is processed, remove them from order and storage
     Item = ItemLookUp[Order.ID]
     
-    CONTROLLERS.StorageManager.AddStock(Item, Order.Amount*-1)
+    # CONTROLLERS.StorageManager.AddStock(Item, Order.Amount*-1)
+    Signals.StorageManager.AddStock.Fire(Item, Order.Amount*-1)
     newQueue.dequeue()
 
 def ItemAdded(Item, Amount):
