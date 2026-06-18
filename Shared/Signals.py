@@ -10,10 +10,14 @@ class SearchSignals:
 
 @dataclass
 class ItemSignals:
+    # Events
     Added: Signal = Signal.new()
     Removing: Signal = Signal.new()
     Edited: Signal = Signal.new()
-    Processed: Signal = Signal.new()    
+    Processed: Signal = Signal.new() 
+
+    # Method
+    AddStock: Signal = Signal.new()
 
 @dataclass
 class SignalsContainer:

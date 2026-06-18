@@ -15,10 +15,7 @@ OrderLookUp = {}
 ItemLookUp = {}
 
 class Init:
-    def __init__(self, SERVICES, CONTROLLERS):
-        global Module
-        self._SERVICES = SERVICES
-        Module = self
+    def __init__(self):
 
         self.Queue = Queue
 
@@ -30,8 +27,8 @@ def ProcessOrder(Order: OrderClass):
     # Once an order is processed, remove them from order and storage
     Item = ItemLookUp[Order.ID]
     
-    # CONTROLLERS.StorageManager.AddStock(Item, Order.Amount*-1)
-    Signals.StorageManager.AddStock.Fire(Item, Order.Amount*-1)
+    Signals.Item.AddStock.Fire(Item, Order.Amount*-1)
+    
     newQueue.dequeue()
 
 def ItemAdded(Item, Amount):
@@ -64,6 +61,6 @@ def OrderProcessed(Item):
     pass
     
 
-Signals.ItemAdded.Connect(ItemAdded)
-Signals.ItemRemoving.Connect(ItemRemoving)
+Signals.Item.Added.Connect(ItemAdded)
+Signals.Item.Removing.Connect(ItemRemoving)
 # Signals.OrderProcessed.Connect(OrderProcessed)

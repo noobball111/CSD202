@@ -2,23 +2,21 @@ from typing import TYPE_CHECKING
 
 from Utils import CustomInput
 from Utils.Signal import Signal
+from Shared.Signals import Signals
 
 class Init:
     def __init__(self, SERVICES, CONTROLLERS):
-        global Module
-        self._SERVICES = SERVICES
-        Module = self
-
         self.Item = {}
     
     def SearchByUPC(self, UPC: int):
-        return self._SERVICES.StorageManager.LookUpbyUPC[UPC]
+        Signals.Search.ByUPC
 
     def SearchBySKU(self, SKU: str):
-        return self._SERVICES.StorageManager.LookUpbySKU[SKU]
+        Signals.Search.BySKU
 
     def SearchByProduct(self, Name: str):
-        return self._SERVICES.StorageManager.LookUpByName[Name]
+        Signals.Search.ByProduct
 
     def SearchByCategory(self, Name: str):
-        return self._SERVICES.StorageManager.CategoryOrder[Name]
+        Signals.Search.ByCategory
+    
