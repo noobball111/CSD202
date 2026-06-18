@@ -149,7 +149,7 @@ class Init:
 
         setattr(Item, attr, value)
 
-        Signals.ItemEdited.Fire(Item, attr, value)
+        Signals.Item.Edited.Fire(Item, attr, value)
 
     def AddStock(self, Item: Item.Item, Amount):
         Item.Stock += Amount
