@@ -5,7 +5,7 @@ from Utils.Signal import Signal
 
 from Shared.Signals import Signals
 
-from Classes.Item import Item
+from Classes.Product import Item
 from Classes.Node import Node
 from Classes.Order import Order
 from Classes.Queue import Queue

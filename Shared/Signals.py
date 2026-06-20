@@ -9,7 +9,7 @@ class SearchSignals:
     ByCategory: Signal = Signal.new()
 
 @dataclass
-class ItemSignals:
+class ProductSignals:
     # Events
     Added: Signal = Signal.new()
     Removing: Signal = Signal.new()
@@ -20,14 +20,19 @@ class ItemSignals:
     AddStock: Signal = Signal.new()
     Edit: Signal = Signal.new()
 
+    
+
 @dataclass
 class SignalsContainer:
 
-    # Item events
-    Item: ItemSignals = field(default_factory=ItemSignals)
+    # Product events
+    Product: ProductSignals = field(default_factory=ProductSignals)
 
     # Search
     Search: SearchSignals = field(default_factory=SearchSignals)
+
+    OnKeywordAdded: Signal = Signal.new()
+    OnKeywordRemoved: Signal = Signal.new()
 
 # Create shared instance
 Signals = SignalsContainer()
