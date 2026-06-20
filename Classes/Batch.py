@@ -18,6 +18,7 @@ class Batch:
         self.Amount = amount
         self.State = state
         self.ImportedDate = dt.now()
+        self.ExpirationDate: dt.datetime | None = None
 
     def SetExpirationDate(self, expirationDate: dt.datetime):
         self.ExpirationDdate = expirationDate
