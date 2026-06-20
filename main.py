@@ -1,11 +1,11 @@
 from Services import UIService
 from Services.FileLoader import FileLoader
 
-DEFAULT_SAVE_FILE = "Data.Data.txt"
+DEFAULT_SAVE_FILE = "Data/Data.txt"
 
 UIService.Init()
 FileLoader = FileLoader()
 
 FileLoader.Load(None or DEFAULT_SAVE_FILE)
 
-print(FileLoader.Load)
+print(FileLoader.Loaded)
