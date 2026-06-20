@@ -5,7 +5,7 @@ from Utils.Signal import Signal
 
 from Shared.Signals import Signals
 
-from Classes import Item
+from Classes import Product
 
 Items = {}
 
@@ -95,7 +95,7 @@ class Init:
     
     # def Add(self, Type: str, Name: str, Category: str, Exp: int, Amount: int, UPC: int|None = None, *args):
 
-    def Add(self, newItem: Item.Item):
+    def Add(self, newItem: Product.Item):
 
 
         # TargetClass = getattr(Item, Type)
@@ -103,7 +103,7 @@ class Init:
         # newSKU = newItem.GenerateSKU()
 
         if self.Existed(newItem.SKU):
-            oldItem: Item.Item = self.Existed(newItem.SKU)
+            oldItem: Product.Item = self.Existed(newItem.SKU)
 
             self.AddStock(oldItem, newItem.Amount)
             
@@ -128,10 +128,10 @@ class Init:
         Signals.Item.Added.Fire(newItem, newItem.Amount)
 
 
-    def Existed(self, SKU: str | None) -> Item.Item:
+    def Existed(self, SKU: str | None) -> Product.Item:
         return self.Items.get(SKU) # pyright: ignore[reportReturnType]
 
-    def Remove(self, Item: Item.Item):
+    def Remove(self, Item: Product.Item):
         Signals.Item.Removing.Fire(Item)
 
         CategoryOrder[Item.Category].remove(Item)
@@ -143,7 +143,7 @@ class Init:
         Items[Item.SKU] = None
 
     
-    def Edit(self, Item: Item.Item, attr, value):
+    def Edit(self, Item: Product.Item, attr, value):
         if not self.Existed(Item.SKU): return
         if not getattr(Item, attr): return
 
@@ -151,7 +151,7 @@ class Init:
 
         Signals.Item.Edited.Fire(Item, attr, value)
 
-    def AddStock(self, Item: Item.Item, Amount):
+    def AddStock(self, Item: Product.Item, Amount):
         Item.Stock += Amount
 
         if Item.Stock == 0:

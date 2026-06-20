@@ -4,7 +4,7 @@ from typing import TYPE_CHECKING
 from Utils import CustomInput
 from Utils.Signal import Signal
 
-from Classes import Item
+from Classes import Product
 
 ItemTypes = ["Item", "Clothes"]
 
@@ -38,8 +38,9 @@ class MainApp:
         
 
 class Init:
-    def __init__(self):
+    def __init__(self, productEnum):
         self.MainApp = MainApp()
+        self.ProductEnum = productEnum
 
         def gui():
             self.MainApp.Draw()
