@@ -62,10 +62,15 @@ class Trie:
         curr = self.Head
 
         lastNonWord = None
+        lastNonWordChar = None
 
         for char in string:
             if char not in curr.Words:
                 return "Not Found"
             else:
-                if curr.IsWord and curr.Word : lastNonWord = curr
+                if curr.IsWord: 
+                    lastNonWord = curr
+                    lastNonWordChar = char
                 curr = curr.Words[char]
+            
+        del lastNonWord.Words[lastNonWordChar]
