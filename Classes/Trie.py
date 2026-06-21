@@ -68,9 +68,12 @@ class Trie:
             if char not in curr.Words:
                 return "Not Found"
             else:
+                curr = curr.Words[char]
+
                 if curr.IsWord: 
                     lastNonWord = curr
                     lastNonWordChar = char
-                curr = curr.Words[char]
-            
+
+        # if not lastNonWord: return
+
         del lastNonWord.Words[lastNonWordChar]
