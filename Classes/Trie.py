@@ -15,7 +15,7 @@ class Trie:
     def __init__(self) -> None:
         self.Head = Node(None)
 
-    def _TravereAll(self, StartNode):
+    def _TraverseAll(self, StartNode):
         res = []
         newStack = Stack()
         newStack.push(StartNode)
@@ -40,7 +40,7 @@ class Trie:
                 return []
             curr = curr.Words[char]
         
-        return self._TravereAll(curr)
+        return self._TraverseAll(curr)
 
     def Add(self, string: str = ""):
         if string == "": return
