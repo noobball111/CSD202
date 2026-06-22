@@ -3,6 +3,7 @@ from .Batch import Batch
 
 class StorageManager:
     def __init__(self):
+        self.Products = dict()
         self.BatchByID = dict()
 
         # All are InvertedIndex to help search be faster
@@ -14,6 +15,15 @@ class StorageManager:
         self.NumericIndexes = dict()
         # We store other indexes for recent additions so we dont need to resort the entire thing every time (unsorted)
         self.DeltaNumericIndexes = dict()
+
+    def AddProduct(self, product):
+        self.Products[product.UPC] = product
+
+    def RemoveProduct(self, product):
+        del self.Products[product.UPC]
+
+    def GetProduct(self, upc):
+        return self.Products.get(upc)
 
     def GetBatch(self, batchID: int):
         return self.BatchByID.get(batchID)

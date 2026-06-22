@@ -3,14 +3,14 @@ from typing import Literal
 from Shared.Signals import Signals
 
 Keywords = {"UPC", "SKU", "Name"}
-ProductCache = list()
+# ProductCache = list()
 
-def AttributeStillExist(name: str):
-    for product in ProductCache:
-        for attr in product.__dict__.keys():
-            if attr == name: return True
+# def AttributeStillExist(name: str):
+#     for product in ProductCache:
+#         for attr in product.__dict__.keys():
+#             if attr == name: return True
 
-    return False
+#     return False
 
 @dataclass
 class Attribute:
@@ -24,7 +24,7 @@ class Product:
         self.Name = Attribute(name, "string", False)
         self.GenerateSKU()
 
-        ProductCache.append(self)
+        # ProductCache.append(self)
 
     def AddAttribute(self, name: str, value: object, type: Literal["string", "int", "float", "bool"], isEnum: bool):
         if hasattr(self, name):

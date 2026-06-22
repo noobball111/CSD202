@@ -59,10 +59,7 @@ class ProductEnum:
         return value in self._enums[enumName]
 
     def Iter(self, enumName: str):
-        if enumName not in self._enums:
-            return iter(())
-
-        return iter(self._enums[enumName])
+        return iter(self._enums.get(enumName, {}))
 
     def GetValues(self, enumName: str):
         if enumName not in self._enums:
@@ -72,3 +69,6 @@ class ProductEnum:
 
     def EnumExists(self, enumName: str):
         return enumName in self._enums
+    
+    def EnumNames(self):
+        return self._enums.keys()
