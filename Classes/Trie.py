@@ -55,3 +55,25 @@ class Trie:
 
         curr.IsWord = True
         curr.Word = string
+    
+    def Remove(self, string: str = ""):
+        if string == "": return
+        string = string.strip().lower()
+        curr = self.Head
+
+        lastNonWord = None
+        lastNonWordChar = None
+
+        for char in string:
+            if char not in curr.Words:
+                return "Not Found"
+            else:
+                curr = curr.Words[char]
+
+                if curr.IsWord: 
+                    lastNonWord = curr
+                    lastNonWordChar = char
+
+        # if not lastNonWord: return
+
+        del lastNonWord.Words[lastNonWordChar]
