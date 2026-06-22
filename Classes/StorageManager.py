@@ -1,5 +1,5 @@
-from Product import Product
-from Batch import Batch
+from .Product import Product
+from .Batch import Batch
 
 class StorageManager:
     def __init__(self):
