@@ -1,4 +1,4 @@
-from Stack import Stack
+from .Stack import Stack
 
 class Node:
     def __init__(self, val) -> None:

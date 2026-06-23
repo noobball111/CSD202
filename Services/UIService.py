@@ -1,86 +1,115 @@
 import copy
+import time
+import random
+import string
+from imgui_bundle import imgui, hello_imgui, ImVec2, ImVec4, em_size
+from typing import List, Optional, Set
+from Classes.Product import Product
+from Classes.SearchEngine import SearchEngine
 
-from imgui_bundle import imgui, hello_imgui, ImVec4, em_to_vec2, em_size
-from typing import TYPE_CHECKING
+# Debug logging
+def debug_print(*args, **kwargs):
+    print(f"[DEBUG {time.strftime('%M:%S')}]", *args, **kwargs)
 
-from Utils import CustomInput
-from Utils.Signal import Signal
-
-from Classes import Product
 
 class EnumEditor:
     def __init__(self, productEnum):
         self.ProductEnum = productEnum
-
         self._newEnumName = ""
+        self._newEnumType = "string"
 
-    def _getEnumNoCollision(self):
-        name = "__enum__"
-        idx = 0
+    def _GetEnumNoCollision(self):
+        return ""
 
-        while self.ProductEnum.EnumExists(name):
-            idx += 1
-            name = f"__enum__{idx}"
-
-        return name
+    def _GetUniquePlaceholder(self, enumName: str, enum_type: str):
+        values = self.ProductEnum.GetValues(enumName)
+        if enum_type == "int":
+            candidate = 0
+            while candidate in values:
+                candidate += 1
+            return candidate
+        elif enum_type == "float":
+            candidate = 0.0
+            while candidate in values:
+                candidate += 1.0
+            return candidate
+        else:  # string
+            candidate = ""
+            idx = 0
+            while candidate in values:
+                candidate = f"__{idx}"
+                idx += 1
+            return candidate
 
     def ShowEnums(self):
-        for enumName in list(self.ProductEnum._enums):
-            if imgui.collapsing_header(enumName):
-
+        for enumName in list(self.ProductEnum.EnumNames()):
+            enum_type = self.ProductEnum.GetType(enumName)
+            if imgui.collapsing_header(f"{enumName}  (type: {enum_type})"):
                 imgui.push_id(enumName)
-
                 values = self.ProductEnum.GetValues(enumName)
 
                 for value in values:
-                    imgui.push_id(value)
-
-                    changed, newValue = imgui.input_text("##Value", value)
-
+                    imgui.push_id(str(value))
+                    current_str = str(value)
+                    changed, new_str = imgui.input_text("##Value", current_str)
                     if changed and imgui.is_item_deactivated_after_edit():
-                        if newValue and not self.ProductEnum.Exists(enumName, newValue):
+                        try:
+                            if enum_type == "int":
+                                new_val = int(new_str)
+                            elif enum_type == "float":
+                                new_val = float(new_str)
+                            else:
+                                new_val = new_str
+                        except (ValueError, TypeError):
+                            new_val = value
+                        if new_val != value:
                             self.ProductEnum.RemoveFromEnum(enumName, value)
-                            self.ProductEnum.AddToEnum(enumName, newValue)
-
+                            self.ProductEnum.AddToEnum(enumName, new_val)
+                            debug_print(f"Enum '{enumName}': changed '{value}' -> '{new_val}'")
                     imgui.same_line()
-
                     if imgui.button("X"):
                         self.ProductEnum.RemoveFromEnum(enumName, value)
-
+                        debug_print(f"Enum '{enumName}': removed '{value}'")
                     imgui.pop_id()
 
                 if imgui.button("Add Option"):
-                    self.ProductEnum.AddToEnum(enumName, self._getEnumNoCollision())
-
+                    placeholder = self._GetUniquePlaceholder(enumName, enum_type)
+                    self.ProductEnum.AddToEnum(enumName, placeholder)
+                    debug_print(f"Enum '{enumName}': added placeholder")
                 imgui.pop_id()
 
     def Draw(self):
         imgui.push_id("EnumEditor")
-
         imgui.text("ENUMS:")
         imgui.same_line()
-
         if imgui.button("+"):
             imgui.open_popup("AddEnumPopup")
 
         if imgui.begin_popup("AddEnumPopup"):
             changed, self._newEnumName = imgui.input_text("##NewEnum", self._newEnumName)
-
+            enum_types = ["string", "int", "float"]
+            current_type_idx = enum_types.index(self._newEnumType) if self._newEnumType in enum_types else 0
+            if imgui.begin_combo("Type", enum_types[current_type_idx]):
+                for i, t in enumerate(enum_types):
+                    if imgui.selectable(t, i == current_type_idx)[0]:
+                        self._newEnumType = t
+                    if i == current_type_idx:
+                        imgui.set_item_default_focus()
+                imgui.end_combo()
             if imgui.button("Create") and self._newEnumName != "" and not self.ProductEnum.EnumExists(self._newEnumName):
-                self.ProductEnum.NewEnum(self._newEnumName)
+                self.ProductEnum.NewEnum(self._newEnumName, self._newEnumType)
+                debug_print(f"Created enum '{self._newEnumName}' with type '{self._newEnumType}'")
                 self._newEnumName = ""
+                self._newEnumType = "string"
                 imgui.close_current_popup()
-
             imgui.end_popup()
 
         imgui.separator()
-
-        if imgui.begin_child("Enums", size=(400, 300)):
+        if imgui.begin_child("Enums", size=ImVec2(400, 300)):
             self.ShowEnums()
-
         imgui.end_child()
-
         imgui.pop_id()
+
 
 class ProductEditor:
     def __init__(self, storageManager, productEnum):
@@ -92,8 +121,8 @@ class ProductEditor:
         self.ProductEnum = productEnum
 
         self._productTemplate = {
-            "UPC": {"Value": "", "Type": "string", "Essential": True}, 
-            "Name": {"Value": "", "Type": "string", "Essential": True}, 
+            "UPC": {"Value": "", "Type": "string", "Essential": True},
+            "Name": {"Value": "", "Type": "string", "Essential": True},
         }
         self._productBaseFieldName = "__field__"
         self._productBaseValue = {
@@ -101,177 +130,781 @@ class ProductEditor:
             "int": 0,
             "float": 0,
             "bool": True,
-            "enum": "",
         }
 
-    def _getFieldNoCollision(self, tbProd):
+        self.searchEngine = SearchEngine(storageManager)
+        self.searchQuery = ""
+        self.searchSuggestions = []
+        self.showSuggestions = False
+
+        self._searching = False
+        self._searchTime = 0.0
+        self._searchResultsCount = 0
+        self._suggestionIndex = 0
+        self._skipDeactivation = False
+        self._refocus = False
+        self._searchInputId = None
+        self._refocusInput = False
+
+        self.filteredProducts = []          # cached filtered product list
+        self._productToDelete = None  # (type, index/upc)
+        self._deletePopupOpen = False
+
+        self.numProductsToGenerate = 5
+
+        # Prefill with demo products
+        self._PrefillDemoProducts()
+
+    # ---------- Demo and generation ----------
+    def _PrefillDemoProducts(self):
+        if self.StorageManager.Products:
+            return
+        debug_print("Prefilling demo products...")
+        demo_data = [
+            {"UPC": "12345", "Name": "Chocolate Milk", "Size": "XL", "Price": 4.99, "InStock": True},
+            {"UPC": "67890", "Name": "Strawberry Yogurt", "Size": "M", "Price": 3.49, "InStock": False},
+            {"UPC": "11111", "Name": "Vanilla Ice Cream", "Size": "L", "Price": 5.99, "InStock": True},
+            {"UPC": "22222", "Name": "Blueberry Muffin", "Size": "S", "Price": 2.49, "InStock": True},
+        ]
+        for data in demo_data:
+            upc = data["UPC"]
+            name = data["Name"]
+            product = Product(upc, name)
+            for field, value in data.items():
+                if field in ("UPC", "Name"):
+                    continue
+                typ = "string" if isinstance(value, str) else "int" if isinstance(value, int) else "float" if isinstance(value, float) else "bool"
+                product.AddAttribute(field, value, typ, False)
+            self.StorageManager.AddProduct(product)
+        self.searchEngine.Rebuild()
+        self._UpdateFilteredProducts()
+        debug_print("Demo products added.")
+
+    def _GenerateRandomProducts(self, count: int):
+        debug_print(f"Generating {count} random products...")
+        adjectives = ["Big", "Small", "Tasty", "Fresh", "Organic", "Premium", "Deluxe", "Classic", "Chewy", "Crispy"]
+        nouns = ["Apple", "Banana", "Cherry", "Date", "Elderberry", "Fig", "Grape", "Honeydew", "Kiwi", "Lemon"]
+        for i in range(count):
+            name = f"{random.choice(adjectives)} {random.choice(nouns)} {i+1}"
+            upc = ''.join(random.choices(string.digits, k=8))
+            product = Product(upc, name)
+            attrs = {
+                "Size": random.choice(["S", "M", "L", "XL"]),
+                "Price": round(random.uniform(1.0, 20.0), 2),
+                "Stock": random.randint(0, 100),
+                "OnSale": random.choice([True, False])
+            }
+            for field, value in attrs.items():
+                typ = "string" if isinstance(value, str) else "int" if isinstance(value, int) else "float" if isinstance(value, float) else "bool"
+                product.AddAttribute(field, value, typ, False)
+            self.StorageManager.AddProduct(product)
+        self.searchEngine.Rebuild()
+        self._UpdateFilteredProducts()
+        debug_print(f"Generated {count} products.")
+
+    # ---------- Helpers ----------
+    def _GetFieldNoCollision(self, tbProd):
         fieldName = self._productBaseFieldName
         idx = 0
         while fieldName in tbProd:
             idx += 1
             fieldName = f"{fieldName}{idx}"
-
         return fieldName
-    
-    def _fieldValue_string(self, data):
-        fieldValueChanged, fieldValue = imgui.input_text("##Field value", data["Value"])
-        changed = fieldValueChanged and imgui.is_item_deactivated_after_edit()
-        if changed:
+
+    def _FieldValue_String(self, data):
+        changed, fieldValue = imgui.input_text("##Field value", data["Value"])
+        if changed and imgui.is_item_deactivated_after_edit():
             data["Value"] = fieldValue
-
-        return changed, fieldValue
-        
-    def _fieldValue_int(self, data):
-        fieldValueChanged, fieldValue = imgui.input_int("##Field value", data["Value"])
-        if fieldValueChanged:
-            data["Value"] = fieldValue
-
-        return fieldValueChanged, fieldValue
-
-    def _fieldValue_float(self, data):
-        fieldValueChanged, fieldValue = imgui.input_float("##Field value", data["Value"])
-        if fieldValueChanged:
-            data["Value"] = fieldValue
-
-        return fieldValueChanged, fieldValue
-
-    def _fieldValue_bool(self, data):
-        fieldValueChanged, fieldValue = imgui.checkbox("##Field value", data["Value"])
-        if fieldValueChanged:
-            data["Value"] = fieldValue
-
-        return fieldValueChanged, fieldValue
-    
-    def _fieldValue_enum(self, data):
-        current = data["Value"]
-
-        if imgui.begin_combo("##Field value", current):
-            for value in self.ProductEnum.Iter(data["Enum"]):
-                selected = value == current
-
-                if imgui.selectable(value, selected)[0]:
-                    data["Value"] = value
-
-                if selected:
-                    imgui.set_item_default_focus()
-
-            imgui.end_combo()
-
+            return True, fieldValue
         return False, data["Value"]
 
-    def ValidateProduct(self, tbProd):
-        errors = []
+    def _FieldValue_Int(self, data):
+        changed, fieldValue = imgui.input_int("##Field value", data["Value"])
+        if changed:
+            data["Value"] = fieldValue
+        return changed, fieldValue
 
+    def _FieldValue_Float(self, data):
+        changed, fieldValue = imgui.input_float("##Field value", data["Value"])
+        if changed:
+            data["Value"] = fieldValue
+        return changed, fieldValue
+
+    def _FieldValue_Bool(self, data):
+        changed, fieldValue = imgui.checkbox("##Field value", data["Value"])
+        if changed:
+            data["Value"] = fieldValue
+        return changed, fieldValue
+
+    # ---------- Get used enums ----------
+    def _GetUsedEnums(self, tbProd):
+        used = set()
+        for field, data in tbProd.items():
+            if field in ("UPC", "Name"):
+                continue
+            if "Enum" in data:
+                used.add(data["Enum"])
+        return used
+
+    def _GetUsedEnumsReal(self, product):
+        used = set()
+        for attr_name, value, is_enum, enum_name, attr_type in product.GetAttributes():
+            if is_enum and enum_name:
+                used.add(enum_name)
+        return used
+
+    # ---------- Validation ----------
+    def ValidateProduct(self, tbProd) -> List[str]:
+        errors = []
         if tbProd["UPC"]["Value"] == "":
             errors.append("UPC is required")
-
         if tbProd["Name"]["Value"] == "":
             errors.append("Name is required")
-
-        upc = tbProd["UPC"]["Value"]
-
-        if upc in self.StorageManager.Products:
-            errors.append("UPC already exists")
-
-        return errors
-    
-    def BuildProduct(self, tbProd):
-        product = Product(tbProd["UPC"]["Value"], tbProd["Name"]["Value"])
 
         for field, data in tbProd.items():
             if field in ("UPC", "Name"):
                 continue
+            if field.startswith(self._productBaseFieldName):
+                errors.append(f"Field name is required (found placeholder)")
+            if data["Type"] == "string" and data["Value"] == "":
+                errors.append(f"Field '{field}' has empty value")
 
-            # FIX PROduCT CLASS
-            product.AddAttribute(field, data["Value"], data["Type"] == "enum")
+        upc = tbProd["UPC"]["Value"]
+        if upc and upc in self.StorageManager.Products:
+            errors.append("UPC already exists")
+        for field, data in tbProd.items():
+            if field in ("UPC", "Name"):
+                continue
+            if "Enum" in data:
+                enum_name = data["Enum"]
+                if data["Value"] not in self.ProductEnum.GetValues(enum_name):
+                    errors.append(f"Field '{field}' has invalid enum value")
+        return errors
 
+    def _ValidateAll(self) -> bool:
+        self.ProductErrors = {}
+        all_valid = True
+        for idx, tbProd in enumerate(self.ToBeProducts):
+            errs = self.ValidateProduct(tbProd)
+            if errs:
+                all_valid = False
+                self.ProductErrors[idx] = {"__general__": errs}
+        return all_valid
+
+    # ---------- Build ----------
+    def BuildProduct(self, tbProd):
+        product = Product(tbProd["UPC"]["Value"], tbProd["Name"]["Value"])
+        for field, data in tbProd.items():
+            if field in ("UPC", "Name"):
+                continue
+            is_enum = "Enum" in data
+            enum_name = data.get("Enum", None)
+            product.AddAttribute(field, data["Value"], data["Type"], is_enum, enum_name)
         return product
 
+    # ---------- Save ----------
+    def _SaveProducts(self):
+        if not self.ToBeProducts:
+            debug_print("No products to save.")
+            return
+        debug_print("Validating products before save...")
+        if not self._ValidateAll():
+            debug_print("Validation failed. Errors:", self.ProductErrors)
+            imgui.open_popup("SaveErrorsPopup")
+            return
+        debug_print("All products valid. Saving...")
+        for tbProd in self.ToBeProducts:
+            product = self.BuildProduct(tbProd)
+            self.StorageManager.AddProduct(product)
+            debug_print(f"Saved product: {product.UPC.Value} - {product.Name.Value}")
+        self.ToBeProducts.clear()
+        self.ProductErrors.clear()
+        self.searchEngine.Rebuild()
+        self._UpdateFilteredProducts()
+        debug_print("All products saved.")
+
+    # ---------- Search / Filter ----------
+    def _ParseQuery(self, query: str) -> tuple[List[str], List[str]]:
+        include = []
+        exclude = []
+        for token in query.split():
+            token = token.strip()
+            if not token:
+                continue
+            if token.startswith('-'):
+                exclude.append(token[1:].strip().lower())
+            else:
+                include.append(token.strip().lower())
+        return include, exclude
+
+    def _FilterProducts(self, query: str) -> List[Product]:
+        if not query.strip():
+            return list(self.StorageManager.Products.values())
+
+        include, exclude = self._ParseQuery(query)
+        include_sets = []
+        for kw in include:
+            s = self.StorageManager.GetProductsByKeyword(kw)
+            if s:
+                include_sets.append(s)
+
+        if include_sets:
+            result = min(include_sets, key=len)
+            for s in include_sets:
+                if s is not result:
+                    result = result.intersection(s)
+        else:
+            result = set(self.StorageManager.Products.keys())
+
+        for kw in exclude:
+            s = self.StorageManager.GetProductsByKeyword(kw)
+            if s:
+                result = result.difference(s)
+
+        return [self.StorageManager.Products[upc] for upc in result if upc in self.StorageManager.Products]
+
+    def _UpdateFilteredProducts(self):
+        self._searching = True
+        start = time.perf_counter()
+        self.filteredProducts = self._FilterProducts(self.searchQuery)
+        self._searchTime = time.perf_counter() - start
+        self._searchResultsCount = len(self.filteredProducts)
+        self._searching = False
+
+    # ---------- Show To‑Be Products ----------
     def ShowToBeProducts(self):
         for i, tbProd in enumerate(self.ToBeProducts):
-            if imgui.collapsing_header(f"[Product] {tbProd["Name"]["Value"] if tbProd["Name"]["Value"] != "" else i}"):
+            header_name = tbProd["Name"]["Value"] if tbProd["Name"]["Value"] != "" else f"Product {i}"
+            is_error = i in self.ProductErrors
+
+            if is_error:
+                imgui.push_style_color(imgui.Col_.header, ImVec4(1.0, 0.3, 0.3, 1.0))
+                imgui.push_style_color(imgui.Col_.header_hovered, ImVec4(1.0, 0.2, 0.2, 1.0))
+            opened = imgui.collapsing_header(f"[{header_name}]")
+            if is_error:
+                imgui.pop_style_color(2)
+
+            if opened:
                 imgui.push_id(f"ToBeProduct{i}")
 
-                # imgui.text(f"[Product] {tbProd["Name"]["Value"] if tbProd["Name"]["Value"] != "" else i}")
+                if i in self.ProductErrors and imgui.is_item_hovered():
+                    imgui.begin_tooltip()
+                    for err in self.ProductErrors[i].get("__general__", []):
+                        imgui.text(err)
+                    imgui.end_tooltip()
+
+                used_enums = self._GetUsedEnums(tbProd)
 
                 for key, data in copy.copy(tbProd).items():
-                    # Field name input text
                     imgui.push_id(f"Field{key}")
 
                     imgui.set_next_item_width(em_size(6))
-                    fieldKeyChanged, fieldKey = imgui.input_text("Field name", key if not self._productBaseFieldName in key else "", flags=imgui.InputTextFlags_.read_only if data["Essential"] else 0)
-                    if fieldKeyChanged and imgui.is_item_deactivated_after_edit():
-                        if fieldKey in tbProd:
-                            fieldKey = key
-                        else:
-                            tbProd[fieldKey] = data
-                            del tbProd[key]
+                    is_essential = data.get("Essential", False)
+                    is_enum = "Enum" in data
 
-                        print(tbProd)
+                    if is_enum:
+                        all_enums = list(self.ProductEnum.EnumNames())
+                        available = [e for e in all_enums if e not in used_enums or e == data["Enum"]]
+                        current_enum = data["Enum"]
+                        if imgui.begin_combo("Field name", current_enum):
+                            for enum_name in available:
+                                if imgui.selectable(enum_name, enum_name == current_enum)[0]:
+                                    if enum_name != current_enum:
+                                        new_key = enum_name
+                                        if new_key in tbProd and new_key != key:
+                                            idx2 = 0
+                                            while f"{new_key}_{idx2}" in tbProd:
+                                                idx2 += 1
+                                            new_key = f"{new_key}_{idx2}"
+                                        data["Enum"] = enum_name
+                                        values = self.ProductEnum.GetValues(enum_name)
+                                        data["Value"] = values[0] if values else (0 if self.ProductEnum.GetType(enum_name) == "int" else (0.0 if self.ProductEnum.GetType(enum_name) == "float" else ""))
+                                        tbProd[new_key] = data
+                                        del tbProd[key]
+                                        debug_print(f"Changed enum field from '{key}' to '{new_key}' referencing enum '{enum_name}'")
+                                if enum_name == current_enum:
+                                    imgui.set_item_default_focus()
+                            imgui.end_combo()
+                    else:
+                        flags = imgui.InputTextFlags_.read_only if is_essential else 0
+                        display_key = "" if self._productBaseFieldName in key else key
+                        fieldKeyChanged, fieldKey = imgui.input_text("Field name", display_key, flags=flags)
+                        if fieldKeyChanged and imgui.is_item_deactivated_after_edit():
+                            if fieldKey and fieldKey not in tbProd:
+                                tbProd[fieldKey] = data
+                                del tbProd[key]
+                                debug_print(f"Renamed field '{key}' -> '{fieldKey}'")
 
-                    # Field value input text
                     imgui.same_line()
                     imgui.set_next_item_width(em_size(6))
-                    
-                    fieldValueFn = getattr(self, f"_fieldValue_{data["Type"]}")
-                    changed, _ = fieldValueFn(data)
-                    if changed:
-                        print(tbProd)
 
-                    # Delete button
-                    if not data["Essential"]:
-                        imgui.push_style_color(0, ImVec4(1.0, 0.0, 0.0, 1.0))
-                        imgui.push_style_color(1, ImVec4(1.0, 0.3, 0.3, 1.0))
-                        imgui.push_style_color(2, ImVec4(0.6, 0.0, 0.0, 1.0))
+                    if is_enum:
+                        enum_name = data["Enum"]
+                        enum_values = self.ProductEnum.GetValues(enum_name)
+                        current_val = data["Value"]
+                        current_str = str(current_val)
+                        selected_idx = -1
+                        for idx_val, val in enumerate(enum_values):
+                            if str(val) == current_str:
+                                selected_idx = idx_val
+                                break
+                        if imgui.begin_combo("##Field value", current_str):
+                            for idx_val, val in enumerate(enum_values):
+                                val_str = str(val)
+                                is_selected = (idx_val == selected_idx)
+                                if imgui.selectable(val_str, is_selected)[0]:
+                                    data["Value"] = val
+                                    debug_print(f"Changed enum field '{key}' to '{val}'")
+                                if is_selected:
+                                    imgui.set_item_default_focus()
+                            imgui.end_combo()
+                    else:
+                        field_type = data["Type"]
+                        fieldValueFn = getattr(self, f"_FieldValue_{field_type.capitalize()}")
+                        changed, _ = fieldValueFn(data)
+                        if changed:
+                            debug_print(f"Changed field '{key}' to '{data['Value']}'")
 
+                    if not is_essential:
+                        imgui.push_style_color(imgui.Col_.button, ImVec4(1.0, 0.0, 0.0, 1.0))
+                        imgui.push_style_color(imgui.Col_.button_hovered, ImVec4(1.0, 0.3, 0.3, 1.0))
+                        imgui.push_style_color(imgui.Col_.button_active, ImVec4(0.6, 0.0, 0.0, 1.0))
                         imgui.same_line()
                         if imgui.button("X"):
-                            # If there's nothing since it was a placeholder then we want to use the original key to delete instead
-                            if fieldKey == "":
-                                del tbProd[key]
-                            else:
-                                del tbProd[fieldKey]
-
+                            del_key = key
+                            del tbProd[del_key]
+                            debug_print(f"Deleted field '{del_key}'")
                         imgui.pop_style_color(3)
 
                     imgui.pop_id()
 
-                # Add field button
                 if imgui.button("Add Field"):
                     imgui.set_next_window_pos(imgui.get_mouse_pos())
                     imgui.open_popup("AddFieldPopup")
 
                 if imgui.begin_popup("AddFieldPopup"):
-                    for type, defaultVal in self._productBaseValue.items():
-                        if type == "enum":
-                            continue
-
-                        if imgui.selectable(type, False)[0]:
-                            tbProd[self._getFieldNoCollision(tbProd)] = {
-                                "Value": defaultVal,
-                                "Type": type,
+                    for type_name, default_val in self._productBaseValue.items():
+                        if imgui.selectable(type_name, False)[0]:
+                            new_key = self._GetFieldNoCollision(tbProd)
+                            tbProd[new_key] = {
+                                "Value": default_val,
+                                "Type": type_name,
                                 "Essential": False,
                             }
-
-                    if imgui.begin_menu("enum"):
-                        for enumName in self.ProductEnum._enums:
-
-                            if imgui.selectable(enumName, False)[0]:
-                                values = self.ProductEnum.GetValues(enumName)
-
-                                tbProd[self._getFieldNoCollision(tbProd)] = {
-                                    "Value": values[0] if values else "",
-                                    "Type": "enum",
-                                    "Enum": enumName,
-                                    "Essential": False,
-                                }
-
-                        imgui.end_menu()
+                            debug_print(f"Added field '{new_key}' of type '{type_name}'")
+                    imgui.separator()
+                    imgui.text("Enums")
+                    available_enums = [e for e in self.ProductEnum.EnumNames() if e not in used_enums]
+                    for enum_name in available_enums:
+                        enum_type = self.ProductEnum.GetType(enum_name)
+                        label = f"{enum_name}  (type: {enum_type})"
+                        if imgui.selectable(label, False)[0]:
+                            values = self.ProductEnum.GetValues(enum_name)
+                            default_value = values[0] if values else (0 if enum_type == "int" else (0.0 if enum_type == "float" else ""))
+                            new_key = enum_name
+                            if new_key in tbProd:
+                                idx2 = 0
+                                while f"{new_key}_{idx2}" in tbProd:
+                                    idx2 += 1
+                                new_key = f"{new_key}_{idx2}"
+                            tbProd[new_key] = {
+                                "Value": default_value,
+                                "Type": enum_type,
+                                "Enum": enum_name,
+                                "Essential": False,
+                            }
+                            debug_print(f"Added enum field '{new_key}' referencing '{enum_name}'")
+                            imgui.close_current_popup()
                     imgui.end_popup()
+
+                # Delete Product button
+                imgui.same_line()
+                imgui.push_style_color(imgui.Col_.button, ImVec4(1.0, 0.0, 0.0, 1.0))
+                imgui.push_style_color(imgui.Col_.button_hovered, ImVec4(1.0, 0.3, 0.3, 1.0))
+                imgui.push_style_color(imgui.Col_.button_active, ImVec4(0.6, 0.0, 0.0, 1.0))
+                if imgui.button("Delete Product"):
+                    debug_print(f"Pending delete button clicked for index {i}")
+                    self._productToDelete = ("pending", i)
+                imgui.pop_style_color(3)
 
                 imgui.pop_id()
 
+    # ---------- Show Real Products ----------
+    def _DrawRealProduct(self, product):
+        upc = product.UPC.Value
+        name = product.Name.Value
+        header_label = f"{upc} - {name}"
 
+        opened = imgui.collapsing_header(header_label)
+
+        if opened:
+            imgui.push_id(f"RealProduct{upc}")
+
+            essential_fields = [("UPC", upc, False, None, "string"), ("Name", name, False, None, "string")]
+            attrs = product.GetAttributes()  # (name, value, is_enum, enum_name, type)
+
+            used_enums = self._GetUsedEnumsReal(product)
+
+            for field_name, field_value, is_enum, enum_name, attr_type in essential_fields + attrs:
+                imgui.push_id(f"Field{field_name}")
+
+                imgui.set_next_item_width(em_size(6))
+                is_essential = field_name in ("UPC", "Name")
+
+                # ---- Field name ----
+                if is_enum and not is_essential:
+                    all_enums = list(self.ProductEnum.EnumNames())
+                    available = [e for e in all_enums if e not in used_enums or e == enum_name]
+                    current_enum = enum_name
+                    if imgui.begin_combo("Field name", current_enum):
+                        for enum_candidate in available:
+                            if imgui.selectable(enum_candidate, enum_candidate == current_enum)[0]:
+                                if enum_candidate != current_enum:
+                                    product.RemoveAttribute(field_name)
+                                    new_values = self.ProductEnum.GetValues(enum_candidate)
+                                    default_val = new_values[0] if new_values else (0 if self.ProductEnum.GetType(enum_candidate) == "int" else (0.0 if self.ProductEnum.GetType(enum_candidate) == "float" else ""))
+                                    new_field_name = enum_candidate
+                                    existing = [a[0] for a in product.GetAttributes() if a[0] != field_name]
+                                    if new_field_name in existing:
+                                        idx2 = 0
+                                        while f"{new_field_name}_{idx2}" in existing:
+                                            idx2 += 1
+                                        new_field_name = f"{new_field_name}_{idx2}"
+                                    product.AddAttribute(new_field_name, default_val, self.ProductEnum.GetType(enum_candidate), True, enum_candidate)
+                                    debug_print(f"Real product {upc}: changed enum field from '{field_name}' to '{new_field_name}' referencing '{enum_candidate}'")
+                            if enum_candidate == current_enum:
+                                imgui.set_item_default_focus()
+                        imgui.end_combo()
+                else:
+                    flags = imgui.InputTextFlags_.read_only if is_essential else 0
+                    display_name = field_name
+                    fieldKeyChanged, new_field_name = imgui.input_text("Field name", display_name, flags=flags)
+                    if fieldKeyChanged and imgui.is_item_deactivated_after_edit():
+                        if new_field_name and new_field_name != field_name and not is_essential:
+                            if new_field_name not in [a[0] for a in product.GetAttributes()]:
+                                old_val = field_value
+                                old_is_enum = is_enum
+                                old_enum_name = enum_name
+                                old_type = attr_type
+                                product.RemoveAttribute(field_name)
+                                product.AddAttribute(new_field_name, old_val, old_type, old_is_enum, old_enum_name)
+                                debug_print(f"Renamed attribute '{field_name}' -> '{new_field_name}' in product {upc}")
+                            else:
+                                debug_print(f"Rename failed: '{new_field_name}' already exists")
+
+                imgui.same_line()
+                imgui.set_next_item_width(em_size(6))
+
+                # ---- Value widget ----
+                if is_enum and not is_essential:
+                    enum_name_for_field = enum_name or product.GetAttributeEnumName(field_name)
+                    if enum_name_for_field:
+                        enum_values = self.ProductEnum.GetValues(enum_name_for_field)
+                        current_str = str(field_value)
+                        selected_idx = -1
+                        for idx_val, val in enumerate(enum_values):
+                            if str(val) == current_str:
+                                selected_idx = idx_val
+                                break
+                        if imgui.begin_combo("##Field value", current_str):
+                            for idx_val, val in enumerate(enum_values):
+                                val_str = str(val)
+                                is_selected = (idx_val == selected_idx)
+                                if imgui.selectable(val_str, is_selected)[0]:
+                                    product.EditAttribute(field_name, val, isEnum=True, enumName=enum_name_for_field)
+                                    debug_print(f"Changed enum '{field_name}' of {upc} to '{val}'")
+                                if is_selected:
+                                    imgui.set_item_default_focus()
+                            imgui.end_combo()
+                    else:
+                        changed, new_val = imgui.input_text("##Field value", str(field_value))
+                        if changed and imgui.is_item_deactivated_after_edit():
+                            product.EditAttribute(field_name, new_val, isEnum=False)
+                            debug_print(f"Changed '{field_name}' of {upc} to '{new_val}'")
+                else:
+                    if attr_type == "int":
+                        changed, new_val = imgui.input_int("##Field value", field_value)
+                        if changed:
+                            product.EditAttribute(field_name, new_val, type="int")
+                            debug_print(f"Changed int '{field_name}' of {upc} to {new_val}")
+                    elif attr_type == "float":
+                        changed, new_val = imgui.input_float("##Field value", field_value)
+                        if changed:
+                            product.EditAttribute(field_name, new_val, type="float")
+                            debug_print(f"Changed float '{field_name}' of {upc} to {new_val}")
+                    elif attr_type == "bool":
+                        changed, new_val = imgui.checkbox("##Field value", field_value)
+                        if changed:
+                            product.EditAttribute(field_name, new_val, type="bool")
+                            debug_print(f"Changed bool '{field_name}' of {upc} to {new_val}")
+                    else:  # string
+                        changed, new_val = imgui.input_text("##Field value", str(field_value))
+                        if changed and imgui.is_item_deactivated_after_edit():
+                            product.EditAttribute(field_name, new_val, type="string")
+                            debug_print(f"Changed string '{field_name}' of {upc} to '{new_val}'")
+
+                # ---- Delete button ----
+                if not is_essential:
+                    imgui.same_line()
+                    imgui.push_style_color(imgui.Col_.button, ImVec4(1.0, 0.0, 0.0, 1.0))
+                    imgui.push_style_color(imgui.Col_.button_hovered, ImVec4(1.0, 0.3, 0.3, 1.0))
+                    imgui.push_style_color(imgui.Col_.button_active, ImVec4(0.6, 0.0, 0.0, 1.0))
+                    if imgui.button("X"):
+                        product.RemoveAttribute(field_name)
+                        debug_print(f"Removed attribute '{field_name}' from {upc}")
+                    imgui.pop_style_color(3)
+
+                imgui.pop_id()
+
+            # ---- Add Field ----
+            if imgui.button("Add Field##real"):
+                imgui.set_next_window_pos(imgui.get_mouse_pos())
+                imgui.open_popup("AddRealFieldPopup")
+
+            if imgui.begin_popup("AddRealFieldPopup"):
+                for type_name, default_val in self._productBaseValue.items():
+                    if imgui.selectable(type_name, False)[0]:
+                        new_name = f"field_{len(product.GetAttributes())}"
+                        product.AddAttribute(new_name, default_val, type_name, False)
+                        debug_print(f"Added field '{new_name}' (type {type_name}) to {upc}")
+                        imgui.close_current_popup()
+                imgui.separator()
+                imgui.text("Enums")
+                used = self._GetUsedEnumsReal(product)
+                available = [e for e in self.ProductEnum.EnumNames() if e not in used]
+                for enum_name2 in available:
+                    enum_type = self.ProductEnum.GetType(enum_name2)
+                    label = f"{enum_name2}  (type: {enum_type})"
+                    if imgui.selectable(label, False)[0]:
+                        values = self.ProductEnum.GetValues(enum_name2)
+                        default_value = values[0] if values else (0 if enum_type == "int" else (0.0 if enum_type == "float" else ""))
+                        new_name = enum_name2
+                        existing_attrs = [a[0] for a in product.GetAttributes()]
+                        if new_name in existing_attrs:
+                            idx2 = 0
+                            while f"{new_name}_{idx2}" in existing_attrs:
+                                idx2 += 1
+                            new_name = f"{new_name}_{idx2}"
+                        product.AddAttribute(new_name, default_value, enum_type, True, enum_name2)
+                        debug_print(f"Added enum field '{new_name}' referencing '{enum_name2}' to {upc}")
+                        imgui.close_current_popup()
+                imgui.end_popup()
+
+            # ---- Delete Product ----
+            imgui.same_line()
+            imgui.push_style_color(imgui.Col_.button, ImVec4(1.0, 0.0, 0.0, 1.0))
+            imgui.push_style_color(imgui.Col_.button_hovered, ImVec4(1.0, 0.3, 0.3, 1.0))
+            imgui.push_style_color(imgui.Col_.button_active, ImVec4(0.6, 0.0, 0.0, 1.0))
+            if imgui.button("Delete Product"):
+                debug_print(f"Real delete button clicked for product {upc}")
+                self._productToDelete = ("real", upc)
+            imgui.pop_style_color(3)
+
+            imgui.pop_id()
+
+    # ---------- Show Products with Search ----------
+    def ShowProducts(self):
+        # ---- Generate button ----
+        imgui.text("Generate:")
+        imgui.same_line()
+        changed, self.numProductsToGenerate = imgui.input_int("##gen_count", self.numProductsToGenerate)
+        if changed:
+            self.numProductsToGenerate = max(1, self.numProductsToGenerate)
+        imgui.same_line()
+        if imgui.button("Generate Products"):
+            self._GenerateRandomProducts(self.numProductsToGenerate)
+        imgui.same_line()
+        if self._searching:
+            imgui.text("Searching...")
+        else:
+            if self.searchQuery.strip():
+                imgui.text(f"{self._searchResultsCount} results in {self._searchTime:.4f}s")
+            else:
+                imgui.text(f"{len(self.filteredProducts)} products")
+        imgui.separator()
+
+        # ---- Search bar (with refocus) ----
+        imgui.text("Search Products:")
+        imgui.same_line()
+
+        if self._refocusInput:
+            debug_print("Refocusing input")
+            imgui.set_keyboard_focus_here()
+            self._refocusInput = False
+
+        changed, self.searchQuery = imgui.input_text("##search", self.searchQuery)
+
+        if changed:
+            debug_print(f"Input changed to: '{self.searchQuery}'")
+            self._UpdateSuggestions()
+
+        # ---- Suggestions window ----
+        input_rect_min = imgui.get_item_rect_min()
+        input_rect_max = imgui.get_item_rect_max()
+
+        if self.showSuggestions:
+            pos = ImVec2(input_rect_min.x, input_rect_max.y)
+            imgui.set_next_window_pos(pos)
+            imgui.set_next_window_size(ImVec2(input_rect_max.x - input_rect_min.x, 200))
+            window_flags = (
+                imgui.WindowFlags_.no_title_bar |
+                imgui.WindowFlags_.no_resize |
+                imgui.WindowFlags_.no_move |
+                imgui.WindowFlags_.no_focus_on_appearing |
+                imgui.WindowFlags_.no_scrollbar
+            )
+            imgui.begin("##suggestions_window", None, window_flags)
+            debug_print(f"Drawing suggestions window with {len(self.searchSuggestions)} items")
+
+            win_pos = imgui.get_window_pos()
+            win_size = imgui.get_window_size()
+            win_rect_min = win_pos
+            win_rect_max = win_pos + win_size
+
+            for idx, sugg in enumerate(self.searchSuggestions):
+                is_selected = (idx == self._suggestionIndex)
+                imgui.selectable(sugg, is_selected)
+                if imgui.is_item_clicked():
+                    debug_print(f"Clicked suggestion: '{sugg}'")
+                    self._apply_suggestion(sugg)
+                if imgui.is_item_hovered():
+                    self._suggestionIndex = idx
+
+            # Close window if mouse clicked outside input and window
+            if imgui.is_mouse_clicked(0):
+                mouse_pos = imgui.get_mouse_pos()
+                in_input = (input_rect_min.x <= mouse_pos.x <= input_rect_max.x and
+                            input_rect_min.y <= mouse_pos.y <= input_rect_max.y)
+                in_window = (win_rect_min.x <= mouse_pos.x <= win_rect_max.x and
+                            win_rect_min.y <= mouse_pos.y <= win_rect_max.y)
+                if not in_input and not in_window:
+                    debug_print("Mouse clicked outside, closing suggestions")
+                    self.showSuggestions = False
+                    self._suggestionIndex = 0
+
+            imgui.end()
+
+        # ---- Keyboard navigation ----
+        is_active = imgui.is_item_active()
+        if is_active and self.showSuggestions and len(self.searchSuggestions) > 0:
+            if self._suggestionIndex >= len(self.searchSuggestions):
+                self._suggestionIndex = len(self.searchSuggestions) - 1
+            if self._suggestionIndex < 0:
+                self._suggestionIndex = 0
+
+            if imgui.is_key_pressed(imgui.Key.up_arrow):
+                self._suggestionIndex = (self._suggestionIndex - 1) % len(self.searchSuggestions)
+                debug_print(f"Selection up: {self._suggestionIndex}")
+            if imgui.is_key_pressed(imgui.Key.down_arrow):
+                self._suggestionIndex = (self._suggestionIndex + 1) % len(self.searchSuggestions)
+                debug_print(f"Selection down: {self._suggestionIndex}")
+
+        # ---- Enter / Tab to select suggestion ----
+        if self.showSuggestions and (imgui.is_key_pressed(imgui.Key.enter) or imgui.is_key_pressed(imgui.Key.tab)):
+            if len(self.searchSuggestions) > 0:
+                selected_suggestion = self.searchSuggestions[self._suggestionIndex]
+                debug_print(f"Selected suggestion via Enter/Tab: '{selected_suggestion}'")
+                self._apply_suggestion(selected_suggestion)
+
+        # ---- Escape to close suggestions ----
+        if self.showSuggestions and imgui.is_key_pressed(imgui.Key.escape):
+            debug_print("Escape pressed, closing suggestions")
+            self.showSuggestions = False
+            self._suggestionIndex = 0
+
+        # ---- Enter (when no suggestions) to apply filter ----
+        if imgui.is_key_pressed(imgui.Key.enter) and not self.showSuggestions:
+            debug_print(f"Enter pressed (no suggestions), applying filter: '{self.searchQuery}'")
+            self._UpdateFilteredProducts()
+
+        # ---- Lost focus (deactivation) ----
+        if imgui.is_item_deactivated_after_edit() and not self.showSuggestions:
+            debug_print(f"Lost focus, applying filter: '{self.searchQuery}'")
+            self._UpdateFilteredProducts()
+            self._suggestionIndex = 0
+
+        # ---- Results ----
+        if not self.filteredProducts:
+            if self.searchQuery.strip():
+                imgui.text("No products match your search.")
+            else:
+                imgui.text("No products stored.")
+            return
+
+        sorted_products = sorted(self.filteredProducts, key=lambda p: p.Name.Value)
+        if imgui.begin_child("RealProductsChild", size=ImVec2(0, 0), child_flags=imgui.ChildFlags_.borders):
+            for product in sorted_products:
+                self._DrawRealProduct(product)
+        imgui.end_child()
+
+    def _UpdateSuggestions(self):
+        """Update autocomplete suggestions for the last token only."""
+        if not self.searchQuery.strip():
+            self.searchSuggestions = []
+            self.showSuggestions = False
+            debug_print("Empty query, clearing suggestions")
+            return
+
+        tokens = self.searchQuery.split()
+        if not tokens:
+            self.searchSuggestions = []
+            self.showSuggestions = False
+            return
+
+        last_token = tokens[-1]
+        debug_print(f"Last token: '{last_token}'")
+
+        # Check if previous token is a field prefix (e.g., "size:")
+        field = None
+        if len(tokens) >= 2:
+            prev_token = tokens[-2]
+            if prev_token.endswith(":") and prev_token[:-1] in self.searchEngine._fieldTries:
+                field = prev_token[:-1]
+                debug_print(f"Previous token is field prefix: '{field}'")
+
+        suggestions = []
+
+        if field:
+            # We are autocompleting a value for a known field
+            # The last token is the value prefix (e.g., "X" for "XL")
+            field_trie = self.searchEngine._fieldTries.get(field)
+            if field_trie:
+                # Get values from field trie that match the last token prefix
+                raw_suggestions = field_trie.Find(last_token)
+                # Only suggest the value part (the completion)
+                # raw_suggestions are full values like "XL", "M"
+                suggestions = raw_suggestions[:10]  # limit
+        else:
+            # Normal autocomplete on the last token
+            # Get completions from main trie (includes field prefixes like "size:")
+            raw_suggestions = self.searchEngine.GetSuggestions(last_token)
+            # Filter to only single-token suggestions (no spaces) and not too long
+            # Also keep field prefixes (ending with ":")
+            for sugg in raw_suggestions:
+                if " " not in sugg and sugg != last_token:
+                    suggestions.append(sugg)
+                if len(suggestions) >= 10:
+                    break
+
+        self.searchSuggestions = suggestions
+        self.showSuggestions = bool(self.searchSuggestions)
+        debug_print(f"Suggestions: {self.searchSuggestions} (show={self.showSuggestions})")
+
+    # ---- Handle suggestion selection (click, Enter, Tab) ----
+    def _apply_suggestion(self, sugg):
+        tokens = self.searchQuery.split()
+        if not tokens:
+            self.searchQuery = sugg
+        else:
+            tokens[-1] = sugg
+            self.searchQuery = " ".join(tokens)
+
+        self._UpdateFilteredProducts()
+        self.showSuggestions = False
+        self._suggestionIndex = 0
+        self._refocusInput = True  # Set flag to refocus on next frame
+
+    # ---------- Main Draw ----------
     def Draw(self):
         imgui.push_id("ProductEditor")
 
@@ -279,37 +912,105 @@ class ProductEditor:
         imgui.same_line()
         if imgui.button("+"):
             self.ToBeProducts.append(copy.deepcopy(self._productTemplate))
+            debug_print("Added new product template")
+
+        imgui.same_line()
+        if imgui.button("Save / Submit"):
+            self._SaveProducts()
+
+        if imgui.begin_popup("SaveErrorsPopup"):
+            imgui.text("Validation errors occurred. Please fix them.")
+            for idx, err_dict in self.ProductErrors.items():
+                imgui.text(f"Product {idx}:")
+                for err in err_dict.get("__general__", []):
+                    imgui.bullet_text(err)
+            if imgui.button("OK"):
+                imgui.close_current_popup()
+            imgui.end_popup()
+
+        # --- Delete confirmation popup ---
+        if self._productToDelete is not None:
+            imgui.open_popup("DeleteConfirmPopup")
+            self._deletePopupOpen = True
+
+        opened = imgui.begin_popup_modal("DeleteConfirmPopup", None, imgui.WindowFlags_.always_auto_resize)[0]
+        if opened:
+            debug_print("Delete confirmation popup opened")
+            if self._productToDelete:
+                if self._productToDelete[0] == "pending":
+                    idx = self._productToDelete[1]
+                    imgui.text(f"Delete pending product #{idx}?")
+                else:
+                    upc = self._productToDelete[1]
+                    imgui.text(f"Delete real product '{upc}'?")
+                if imgui.button("Yes"):
+                    debug_print("Delete confirmed")
+                    if self._productToDelete[0] == "pending":
+                        del self.ToBeProducts[self._productToDelete[1]]
+                        debug_print(f"Deleted pending product at index {self._productToDelete[1]}")
+                    else:
+                        upc = self._productToDelete[1]
+                        if upc in self.StorageManager.Products:
+                            product = self.StorageManager.Products[upc]
+                            self.StorageManager.RemoveProduct(product)
+                            debug_print(f"Deleted real product '{upc}'")
+                    self._productToDelete = None
+                    self._deletePopupOpen = False
+                    self.searchEngine.Rebuild()
+                    self._UpdateFilteredProducts()
+                    imgui.close_current_popup()
+                imgui.same_line()
+                if imgui.button("No"):
+                    debug_print("Delete cancelled")
+                    self._productToDelete = None
+                    self._deletePopupOpen = False
+                    imgui.close_current_popup()
+            else:
+                imgui.close_current_popup()
+            imgui.end_popup()
+        else:
+            if self._productToDelete is not None and self._deletePopupOpen:
+                debug_print("Popup was closed without confirmation, clearing delete request")
+                self._productToDelete = None
+                self._deletePopupOpen = False
 
         imgui.separator()
-        if imgui.begin_child("Products", size=(400, 300)):
-            self.ShowToBeProducts()
 
+        imgui.columns(2, "ProductEditorColumns", True)
+        imgui.set_column_width(0, imgui.get_window_width() * 0.45)
+
+        if imgui.begin_child("ToBeProductsChild", size=ImVec2(0, 0), child_flags=imgui.ChildFlags_.borders):
+            if not self.ToBeProducts:
+                imgui.text("No pending products.")
+            else:
+                self.ShowToBeProducts()
         imgui.end_child()
 
+        imgui.next_column()
+
+        if imgui.begin_child("RealProductsChildMain", size=ImVec2(0, 0), child_flags=imgui.ChildFlags_.borders):
+            self.ShowProducts()
+        imgui.end_child()
+
+        imgui.columns(1)
         imgui.pop_id()
-        
 
 
 class MainApp:
     def __init__(self, storageManager, productEnum):
         self.Filter = imgui.TextFilter()
-
         self.ProductEditor = ProductEditor(storageManager, productEnum)
         self.EnumEditor = EnumEditor(productEnum)
-
         self.StorageManager = storageManager
 
     def Draw(self):
         if imgui.begin_tab_bar("MainTab"):
             opened, visible = imgui.begin_tab_item("Product Editor")
-            if opened: 
+            if opened:
                 self.ProductEditor.Draw()
                 self.EnumEditor.Draw()
-            
             imgui.end_tab_item()
-
         imgui.end_tab_bar()
-            
 
         # self.Filter.draw('Search ("incl,-excl") ("error")', em_size(25))
 
