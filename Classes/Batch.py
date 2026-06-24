@@ -21,7 +21,7 @@ class Batch:
         self.ExpirationDate: dt.datetime | None = None
 
     def SetExpirationDate(self, expirationDate: dt.datetime):
-        self.ExpirationDdate = expirationDate
+        self.ExpirationDate = expirationDate
 
     def AddAmount(self, amount: int):
         self.Amount += amount

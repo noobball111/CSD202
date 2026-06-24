@@ -1079,7 +1079,9 @@ class BatchEditor:
                 errors.append("Expiration date is required")
             else:
                 try:
-                    dt.datetime.strptime(tbBatch["ExpirationDate"], "%Y-%m-%d")
+                    exp_date = dt.datetime.strptime(tbBatch["ExpirationDate"], "%Y-%m-%d")
+                    if exp_date < dt.datetime.now():
+                        errors.append("Expiration date cannot be in the past")
                 except ValueError:
                     errors.append("Expiration date must be in YYYY-MM-DD format")
         return errors
@@ -1095,12 +1097,17 @@ class BatchEditor:
         return all_valid
 
     def _buildBatch(self, tbBatch):
+        debug_print(f"_buildBatch: Creating batch for UPC={tbBatch['ProductUPC']}")
         batch = Batch(tbBatch["ProductUPC"], tbBatch["Amount"], tbBatch["State"])
         if tbBatch["HasExpiration"] and tbBatch["ExpirationDate"].strip():
             try:
-                batch.SetExpirationDate(dt.datetime.strptime(tbBatch["ExpirationDate"], "%Y-%m-%d"))
-            except ValueError:
-                pass
+                exp_date = dt.datetime.strptime(tbBatch["ExpirationDate"], "%Y-%m-%d")
+                batch.ExpirationDate = exp_date   # direct assignment
+                debug_print(f"  -> Set expiration to {exp_date}")
+            except ValueError as e:
+                debug_print(f"  -> Failed to parse expiration date: {e}")
+        else:
+            debug_print("  -> No expiration set")
         return batch
 
     # ---------- Save pending batches ----------
@@ -1116,6 +1123,7 @@ class BatchEditor:
         debug_print("All batches valid. Saving...")
         for tbBatch in self.ToBeBatches:
             batch = self._buildBatch(tbBatch)
+            debug_print(f"About to add batch: ID={batch.BatchID}, ExpirationDate={batch.ExpirationDate}")
             self.StorageManager.AddBatch(batch)
             debug_print(f"Saved batch {batch.BatchID} for product {batch.ProductUPC}")
         self.ToBeBatches.clear()
@@ -1203,62 +1211,60 @@ class BatchEditor:
 
         imgui.push_id(f"batch_{batch_id}")
 
-        # Display ID and product info (UPC + Name)
         imgui.text(f"ID: {batch_id}")
         imgui.same_line()
 
-        # Get product name
         product = self.StorageManager.Products.get(batch.ProductUPC)
         product_name = product.Name.Value if product else "Unknown"
         imgui.text(f"UPC: {batch.ProductUPC} ({product_name})")
         imgui.same_line()
 
-        # Amount – increased width to fit 4+ digits
-        imgui.set_next_item_width(em_size(6))
+        # Amount – em_size(8)
+        imgui.set_next_item_width(em_size(8))
         changed, amount = imgui.input_int("Amount", batch.Amount)
         if changed:
-            batch.SetAmount(max(1, amount))
+            batch.Amount = max(1, amount)
             self._reindexBatch(batch)
             self._updateFilteredBatches()
 
         imgui.same_line()
 
-        # State – constrained width
-        imgui.set_next_item_width(em_size(6))
+        # State – width 150px
+        imgui.set_next_item_width(150.0)
         states = ["Good", "ToBeReviewed"]
         current_idx = states.index(batch.State) if batch.State in states else 0
         if imgui.begin_combo("State", states[current_idx]):
             for idx, state in enumerate(states):
                 if imgui.selectable(state, idx == current_idx)[0]:
-                    batch.SetState(state)
+                    batch.State = state
                     self._reindexBatch(batch)
                     self._updateFilteredBatches()
             imgui.end_combo()
 
         imgui.same_line()
 
-        # Expiration
+        # Expiration checkbox – directly modify batch.ExpirationDate
         has_exp = batch.ExpirationDate is not None
         changed, has_exp = imgui.checkbox("Has Expiration", has_exp)
         if changed:
-            debug_print(f"Toggling expiration for batch {batch_id}: {has_exp}")
+            debug_print(f"Toggled expiration for batch {batch_id}: {has_exp}")
             if has_exp:
-                # Set a default expiration date (today + 30 days)
-                batch.SetExpirationDate(dt.datetime.now() + dt.timedelta(days=30))
+                batch.ExpirationDate = dt.datetime.now() + dt.timedelta(days=30)
+                debug_print(f"  Set expiration to {batch.ExpirationDate}")
             else:
-                batch.SetExpirationDate(None)
+                batch.ExpirationDate = None
             self._reindexBatch(batch)
             self._updateFilteredBatches()
 
         if batch.ExpirationDate:
             current_date = batch.ExpirationDate.strftime("%Y-%m-%d")
             imgui.same_line()
-            imgui.set_next_item_width(em_size(6))
+            imgui.set_next_item_width(100.0)
             changed, new_date_str = imgui.input_text("Expiration", current_date)
             if changed and imgui.is_item_deactivated_after_edit():
                 try:
                     new_date = dt.datetime.strptime(new_date_str, "%Y-%m-%d")
-                    batch.SetExpirationDate(new_date)
+                    batch.ExpirationDate = new_date
                     self._reindexBatch(batch)
                     self._updateFilteredBatches()
                 except ValueError:
@@ -1266,6 +1272,7 @@ class BatchEditor:
 
         imgui.same_line()
         if imgui.button(f"Delete##{batch_id}"):
+            debug_print(f"Delete button clicked for batch {batch_id}")
             self._batchToDelete = ("real", batch_id)
             imgui.open_popup("DeleteBatchConfirmPopup")
 
@@ -1382,8 +1389,9 @@ class BatchEditor:
                     self._drawBatch(batch)
             imgui.end_child()
 
+        self._showDeletePopup()
+
     def _updateSuggestions(self):
-        """Update batch search suggestions using SearchEngine."""
         if not self.searchQuery.strip():
             self.searchSuggestions = []
             self.showSuggestions = False
@@ -1403,7 +1411,6 @@ class BatchEditor:
 
     # ---------- UI: Pending Batches ----------
     def ShowToBeBatches(self):
-        # ---- Add button at top ----
         if imgui.button("+ Add Batch"):
             self.ToBeBatches.append(copy.deepcopy(self._batchTemplate))
 
@@ -1413,7 +1420,6 @@ class BatchEditor:
 
         imgui.separator()
 
-        # ---- Render pending batches with scrolling ----
         if not self.ToBeBatches:
             imgui.text("No pending batches.")
             return
@@ -1438,7 +1444,6 @@ class BatchEditor:
                             imgui.text(err)
                         imgui.end_tooltip()
 
-                    # ---- Product UPC (searchable combo) ----
                     all_upcs = list(self.StorageManager.Products.keys())
                     product_options = []
                     for upc in all_upcs:
@@ -1464,13 +1469,12 @@ class BatchEditor:
                                     self.BatchErrors[i] = []
                         imgui.end_combo()
 
-                    # ---- Amount (width constrained) ----
-                    imgui.set_next_item_width(em_size(4))
+                    imgui.set_next_item_width(em_size(8))
                     changed, amount = imgui.input_int("Amount", tbBatch["Amount"])
                     if changed:
                         tbBatch["Amount"] = max(1, amount)
 
-                    # ---- State ----
+                    imgui.set_next_item_width(150.0)
                     states = ["Good", "ToBeReviewed"]
                     current_idx2 = states.index(tbBatch["State"]) if tbBatch["State"] in states else 0
                     if imgui.begin_combo("State", states[current_idx2]):
@@ -1479,18 +1483,17 @@ class BatchEditor:
                                 tbBatch["State"] = state
                         imgui.end_combo()
 
-                    # ---- Expiration ----
                     changed, has_exp = imgui.checkbox("Has Expiration", tbBatch["HasExpiration"])
                     if changed:
                         tbBatch["HasExpiration"] = has_exp
                     if tbBatch["HasExpiration"]:
-                        imgui.set_next_item_width(em_size(6))
+                        imgui.set_next_item_width(100.0)
                         changed, exp_str = imgui.input_text("Expiration Date (YYYY-MM-DD)", tbBatch["ExpirationDate"])
                         if changed:
                             tbBatch["ExpirationDate"] = exp_str
 
-                    # ---- Delete button ----
                     if imgui.button("Delete"):
+                        debug_print(f"Delete pending batch at index {i}")
                         del self.ToBeBatches[i]
                         self.BatchErrors.pop(i, None)
                         imgui.pop_id()
@@ -1501,7 +1504,6 @@ class BatchEditor:
 
             imgui.end_child()
 
-        # ---- Error popup ----
         if imgui.begin_popup("BatchSaveErrorsPopup"):
             imgui.text("Validation errors occurred. Please fix them:")
             for idx, errs in self.BatchErrors.items():
@@ -1512,7 +1514,10 @@ class BatchEditor:
                 imgui.close_current_popup()
             imgui.end_popup()
 
-        # ---- Delete confirmation popup ----
+        self._showDeletePopup()
+
+    # ---------- Shared delete confirmation popup ----------
+    def _showDeletePopup(self):
         if self._batchToDelete is not None:
             imgui.open_popup("DeleteBatchConfirmPopup")
         if imgui.begin_popup_modal("DeleteBatchConfirmPopup", None, imgui.WindowFlags_.always_auto_resize)[0]:
@@ -1521,6 +1526,7 @@ class BatchEditor:
                     batch_id = self._batchToDelete[1]
                     imgui.text(f"Delete batch #{batch_id}?")
                     if imgui.button("Yes"):
+                        debug_print(f"Confirmed deletion of real batch {batch_id}")
                         self.StorageManager.RemoveBatch(batch_id)
                         self.searchEngine.Rebuild()
                         self._updateFilteredBatches()
@@ -1531,6 +1537,7 @@ class BatchEditor:
                         self._batchToDelete = None
                         imgui.close_current_popup()
                 else:
+                    self._batchToDelete = None
                     imgui.close_current_popup()
             else:
                 imgui.close_current_popup()
