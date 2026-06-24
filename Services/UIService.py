@@ -15,12 +15,13 @@ def debug_print(*args, **kwargs):
     print(f"[DEBUG {time.strftime('%M:%S')}]", *args, **kwargs)
 
 
-# ---------- EnumEditor (unchanged) ----------
+# ---------- EnumEditor ----------
 class EnumEditor:
     def __init__(self, productEnum):
         self.ProductEnum = productEnum
         self._newEnumName = ""
         self._newEnumType = "string"
+        self._generateCount = 5
 
     def _GetEnumNoCollision(self):
         return ""
@@ -44,6 +45,29 @@ class EnumEditor:
                 candidate = f"__{idx}"
                 idx += 1
             return candidate
+
+    def _GenerateRandomEnums(self, count: int):
+        import random
+        debug_print(f"Generating {count} random enums...")
+        adjectives = ["Color", "Size", "Flavor", "Category", "Status", "Priority", "Type", "Grade", "Level"]
+        values_pool = {
+            "string": ["Red", "Green", "Blue", "Large", "Medium", "Small", "Sweet", "Sour", "High", "Low"],
+            "int": [1, 2, 3, 5, 10, 20, 50, 100],
+            "float": [1.0, 2.5, 3.14, 5.99, 10.5, 20.0]
+        }
+        for i in range(count):
+            name = f"{random.choice(adjectives)}_{i+1}"
+            typ = random.choice(["string", "int", "float"])
+            if typ == "string":
+                values = random.sample(values_pool["string"], k=min(4, len(values_pool["string"])))
+            elif typ == "int":
+                values = random.sample(values_pool["int"], k=min(4, len(values_pool["int"])))
+            else:
+                values = random.sample(values_pool["float"], k=min(4, len(values_pool["float"])))
+            self.ProductEnum.NewEnum(name, typ)
+            for val in values:
+                self.ProductEnum.AddToEnum(name, val)
+            debug_print(f"Created enum '{name}' with type '{typ}' and values {values}")
 
     def ShowEnums(self):
         for enumName in list(self.ProductEnum.EnumNames()):
@@ -89,6 +113,16 @@ class EnumEditor:
         if imgui.button("+"):
             imgui.open_popup("AddEnumPopup")
 
+        imgui.same_line()
+        imgui.text("Generate:")
+        imgui.same_line()
+        changed, self._generateCount = imgui.input_int("##enum_gen_count", self._generateCount)
+        if changed:
+            self._generateCount = max(1, self._generateCount)
+        imgui.same_line()
+        if imgui.button("Generate Enums"):
+            self._GenerateRandomEnums(self._generateCount)
+
         if imgui.begin_popup("AddEnumPopup"):
             changed, self._newEnumName = imgui.input_text("##NewEnum", self._newEnumName)
             enum_types = ["string", "int", "float"]
@@ -115,7 +149,7 @@ class EnumEditor:
         imgui.pop_id()
 
 
-# ---------- ProductEditor (unchanged) ----------
+# ---------- ProductEditor ----------
 class ProductEditor:
     def __init__(self, storageManager, productEnum):
         self.ToBeProducts = []
@@ -1003,6 +1037,7 @@ class ProductEditor:
         imgui.pop_id()
 
 
+# ---------- BatchEditor ----------
 class BatchEditor:
     def __init__(self, storageManager):
         self.StorageManager = storageManager
@@ -1030,6 +1065,7 @@ class BatchEditor:
         }
         self._batchToDelete = None
         self._productFilter = ""
+        self._generateBatchCount = 5
 
         self._prefillDemoBatches()
 
@@ -1061,6 +1097,29 @@ class BatchEditor:
         self.searchEngine.Rebuild()
         self._updateFilteredBatches()
         debug_print("Demo batches added.")
+
+    # ---------- Generation ----------
+    def _GenerateRandomBatches(self, count: int):
+        import random
+        debug_print(f"Generating {count} random batches...")
+        if not self.StorageManager.Products:
+            debug_print("No products available to generate batches for.")
+            return
+        upc_list = list(self.StorageManager.Products.keys())
+        states = ["Good", "ToBeReviewed"]
+        for i in range(count):
+            upc = random.choice(upc_list)
+            amount = random.randint(1, 100)
+            state = random.choice(states)
+            batch = Batch(upc, amount, state)
+            if random.random() > 0.5:
+                delta = dt.timedelta(days=random.randint(1, 365))
+                batch.SetExpirationDate(dt.datetime.now() + delta)
+            self.StorageManager.AddBatch(batch)
+            debug_print(f"Generated batch {batch.BatchID} for UPC {upc}")
+        self.searchEngine.Rebuild()
+        self._updateFilteredBatches()
+        debug_print(f"Generated {count} batches.")
 
     # ---------- Validation (pending batches) ----------
     def _validateBatch(self, tbBatch: dict) -> List[str]:
@@ -1102,7 +1161,7 @@ class BatchEditor:
         if tbBatch["HasExpiration"] and tbBatch["ExpirationDate"].strip():
             try:
                 exp_date = dt.datetime.strptime(tbBatch["ExpirationDate"], "%Y-%m-%d")
-                batch.ExpirationDate = exp_date   # direct assignment
+                batch.ExpirationDate = exp_date
                 debug_print(f"  -> Set expiration to {exp_date}")
             except ValueError as e:
                 debug_print(f"  -> Failed to parse expiration date: {e}")
@@ -1554,6 +1613,16 @@ class BatchEditor:
         imgui.text("Pending Batches")
         imgui.separator()
         self.ShowToBeBatches()
+
+        imgui.separator()
+        imgui.text("Generate Batches:")
+        imgui.same_line()
+        changed, self._generateBatchCount = imgui.input_int("##batch_gen_count", self._generateBatchCount)
+        if changed:
+            self._generateBatchCount = max(1, self._generateBatchCount)
+        imgui.same_line()
+        if imgui.button("Generate Batches"):
+            self._GenerateRandomBatches(self._generateBatchCount)
 
         imgui.pop_id()
 
