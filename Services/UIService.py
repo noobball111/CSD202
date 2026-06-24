@@ -2,16 +2,20 @@ import copy
 import time
 import random
 import string
+import datetime as dt
 from imgui_bundle import imgui, hello_imgui, ImVec2, ImVec4, em_size
 from typing import List, Optional, Set
 from Classes.Product import Product
+from Classes.Batch import Batch
 from Classes.SearchEngine import SearchEngine
+from Classes.Trie import Trie
 
 # Debug logging
 def debug_print(*args, **kwargs):
     print(f"[DEBUG {time.strftime('%M:%S')}]", *args, **kwargs)
 
 
+# ---------- EnumEditor (unchanged) ----------
 class EnumEditor:
     def __init__(self, productEnum):
         self.ProductEnum = productEnum
@@ -111,6 +115,7 @@ class EnumEditor:
         imgui.pop_id()
 
 
+# ---------- ProductEditor (unchanged) ----------
 class ProductEditor:
     def __init__(self, storageManager, productEnum):
         self.ToBeProducts = []
@@ -141,18 +146,16 @@ class ProductEditor:
         self._searchTime = 0.0
         self._searchResultsCount = 0
         self._suggestionIndex = 0
-        self._skipDeactivation = False
+        self._justSelected = False
+        self._enterConsumed = False
+        self._prevSearchQuery = ""
         self._refocus = False
-        self._searchInputId = None
-        self._refocusInput = False
 
-        self.filteredProducts = []          # cached filtered product list
-        self._productToDelete = None  # (type, index/upc)
+        self.filteredProducts = []
+        self._productToDelete = None
         self._deletePopupOpen = False
-
         self.numProductsToGenerate = 5
 
-        # Prefill with demo products
         self._PrefillDemoProducts()
 
     # ---------- Demo and generation ----------
@@ -704,6 +707,11 @@ class ProductEditor:
 
     # ---------- Show Products with Search ----------
     def ShowProducts(self):
+        # Refocus on the search bar if a suggestion was just selected
+        if self._refocus:
+            imgui.set_keyboard_focus_here()
+            self._refocus = False
+
         # ---- Generate button ----
         imgui.text("Generate:")
         imgui.same_line()
@@ -723,20 +731,31 @@ class ProductEditor:
                 imgui.text(f"{len(self.filteredProducts)} products")
         imgui.separator()
 
-        # ---- Search bar (with refocus) ----
+        # ---- Search bar with enter_returns_true ----
         imgui.text("Search Products:")
         imgui.same_line()
+        flags = imgui.InputTextFlags_.enter_returns_true
+        changed, self.searchQuery = imgui.input_text("##search", self.searchQuery, flags=flags)
 
-        if self._refocusInput:
-            debug_print("Refocusing input")
-            imgui.set_keyboard_focus_here()
-            self._refocusInput = False
-
-        changed, self.searchQuery = imgui.input_text("##search", self.searchQuery)
-
-        if changed:
-            debug_print(f"Input changed to: '{self.searchQuery}'")
+        # ---- Live suggestions ----
+        is_active = imgui.is_item_active()
+        if is_active and self.searchQuery != self._prevSearchQuery:
+            self._prevSearchQuery = self.searchQuery
+            debug_print(f"Live update: '{self.searchQuery}'")
             self._UpdateSuggestions()
+
+        # ---- Enter handling ----
+        if changed:
+            # Enter was pressed
+            if self.showSuggestions and len(self.searchSuggestions) > 0:
+                selected_suggestion = self.searchSuggestions[self._suggestionIndex]
+                debug_print(f"Selected suggestion via Enter: '{selected_suggestion}'")
+                self._apply_suggestion(selected_suggestion)
+            else:
+                debug_print(f"Enter pressed (no suggestions), applying filter: '{self.searchQuery}'")
+                self._UpdateFilteredProducts()
+                self._suggestionIndex = 0
+                imgui.set_keyboard_focus_here()
 
         # ---- Suggestions window ----
         input_rect_min = imgui.get_item_rect_min()
@@ -776,7 +795,7 @@ class ProductEditor:
                 in_input = (input_rect_min.x <= mouse_pos.x <= input_rect_max.x and
                             input_rect_min.y <= mouse_pos.y <= input_rect_max.y)
                 in_window = (win_rect_min.x <= mouse_pos.x <= win_rect_max.x and
-                            win_rect_min.y <= mouse_pos.y <= win_rect_max.y)
+                             win_rect_min.y <= mouse_pos.y <= win_rect_max.y)
                 if not in_input and not in_window:
                     debug_print("Mouse clicked outside, closing suggestions")
                     self.showSuggestions = False
@@ -785,7 +804,6 @@ class ProductEditor:
             imgui.end()
 
         # ---- Keyboard navigation ----
-        is_active = imgui.is_item_active()
         if is_active and self.showSuggestions and len(self.searchSuggestions) > 0:
             if self._suggestionIndex >= len(self.searchSuggestions):
                 self._suggestionIndex = len(self.searchSuggestions) - 1
@@ -799,29 +817,23 @@ class ProductEditor:
                 self._suggestionIndex = (self._suggestionIndex + 1) % len(self.searchSuggestions)
                 debug_print(f"Selection down: {self._suggestionIndex}")
 
-        # ---- Enter / Tab to select suggestion ----
-        if self.showSuggestions and (imgui.is_key_pressed(imgui.Key.enter) or imgui.is_key_pressed(imgui.Key.tab)):
-            if len(self.searchSuggestions) > 0:
-                selected_suggestion = self.searchSuggestions[self._suggestionIndex]
-                debug_print(f"Selected suggestion via Enter/Tab: '{selected_suggestion}'")
-                self._apply_suggestion(selected_suggestion)
-
         # ---- Escape to close suggestions ----
         if self.showSuggestions and imgui.is_key_pressed(imgui.Key.escape):
             debug_print("Escape pressed, closing suggestions")
             self.showSuggestions = False
             self._suggestionIndex = 0
-
-        # ---- Enter (when no suggestions) to apply filter ----
-        if imgui.is_key_pressed(imgui.Key.enter) and not self.showSuggestions:
-            debug_print(f"Enter pressed (no suggestions), applying filter: '{self.searchQuery}'")
-            self._UpdateFilteredProducts()
+            imgui.set_keyboard_focus_here()
 
         # ---- Lost focus (deactivation) ----
         if imgui.is_item_deactivated_after_edit() and not self.showSuggestions:
-            debug_print(f"Lost focus, applying filter: '{self.searchQuery}'")
-            self._UpdateFilteredProducts()
-            self._suggestionIndex = 0
+            if self._justSelected:
+                debug_print("Deactivation after selection, ignoring")
+                self._justSelected = False
+                self._enterConsumed = False
+            else:
+                debug_print(f"Lost focus, applying filter: '{self.searchQuery}'")
+                self._UpdateFilteredProducts()
+                self._suggestionIndex = 0
 
         # ---- Results ----
         if not self.filteredProducts:
@@ -837,6 +849,23 @@ class ProductEditor:
                 self._DrawRealProduct(product)
         imgui.end_child()
 
+    def _apply_suggestion(self, sugg):
+        tokens = self.searchQuery.split()
+        if not tokens:
+            self.searchQuery = sugg
+        else:
+            tokens[-1] = sugg
+            self.searchQuery = " ".join(tokens)
+
+        self._UpdateFilteredProducts()
+        self.showSuggestions = False
+        self._suggestionIndex = 0
+        self._justSelected = True
+        self._enterConsumed = True
+        self._prevSearchQuery = self.searchQuery
+        self._refocus = True
+
+    # ---------- Autocomplete ----------
     def _UpdateSuggestions(self):
         """Update autocomplete suggestions for the last token only."""
         if not self.searchQuery.strip():
@@ -865,44 +894,22 @@ class ProductEditor:
         suggestions = []
 
         if field:
-            # We are autocompleting a value for a known field
-            # The last token is the value prefix (e.g., "X" for "XL")
             field_trie = self.searchEngine._fieldTries.get(field)
             if field_trie:
-                # Get values from field trie that match the last token prefix
                 raw_suggestions = field_trie.Find(last_token)
-                # Only suggest the value part (the completion)
-                # raw_suggestions are full values like "XL", "M"
-                suggestions = raw_suggestions[:10]  # limit
+                suggestions = [v for v in raw_suggestions if ":" not in v][:10]
         else:
-            # Normal autocomplete on the last token
-            # Get completions from main trie (includes field prefixes like "size:")
             raw_suggestions = self.searchEngine.GetSuggestions(last_token)
-            # Filter to only single-token suggestions (no spaces) and not too long
-            # Also keep field prefixes (ending with ":")
             for sugg in raw_suggestions:
-                if " " not in sugg and sugg != last_token:
-                    suggestions.append(sugg)
+                if sugg.endswith(":") or (":" not in sugg and " " not in sugg):
+                    if sugg != last_token:
+                        suggestions.append(sugg)
                 if len(suggestions) >= 10:
                     break
 
         self.searchSuggestions = suggestions
         self.showSuggestions = bool(self.searchSuggestions)
         debug_print(f"Suggestions: {self.searchSuggestions} (show={self.showSuggestions})")
-
-    # ---- Handle suggestion selection (click, Enter, Tab) ----
-    def _apply_suggestion(self, sugg):
-        tokens = self.searchQuery.split()
-        if not tokens:
-            self.searchQuery = sugg
-        else:
-            tokens[-1] = sugg
-            self.searchQuery = " ".join(tokens)
-
-        self._UpdateFilteredProducts()
-        self.showSuggestions = False
-        self._suggestionIndex = 0
-        self._refocusInput = True  # Set flag to refocus on next frame
 
     # ---------- Main Draw ----------
     def Draw(self):
@@ -996,21 +1003,579 @@ class ProductEditor:
         imgui.pop_id()
 
 
+class BatchEditor:
+    def __init__(self, storageManager):
+        self.StorageManager = storageManager
+        self.searchEngine = SearchEngine(storageManager, index_type='batch')
+        self.ToBeBatches = []
+        self.BatchErrors = {}
+        self.searchQuery = ""
+        self.searchSuggestions = []
+        self.showSuggestions = False
+        self.filteredBatchIDs = []
+        self._searching = False
+        self._searchTime = 0.0
+        self._searchResultsCount = 0
+        self._suggestionIndex = 0
+        self._justSelected = False
+        self._refocus = False
+        self._prevSearchQuery = ""
+
+        self._batchTemplate = {
+            "ProductUPC": "",
+            "Amount": 1,
+            "State": "Good",
+            "HasExpiration": False,
+            "ExpirationDate": "",
+        }
+        self._batchToDelete = None
+        self._productFilter = ""
+
+        self._prefillDemoBatches()
+
+    # ---------- Index maintenance ----------
+    def _reindexBatch(self, batch):
+        self.StorageManager._removeBatch(batch)
+        self.StorageManager._indexBatch(batch)
+        self.searchEngine.Rebuild()
+
+    # ---------- Demo ----------
+    def _prefillDemoBatches(self):
+        if self.StorageManager.BatchByID:
+            return
+        debug_print("Prefilling demo batches...")
+        demo = [
+            {"UPC": "12345", "Amount": 10, "State": "Good", "Expiration": "2025-12-31"},
+            {"UPC": "67890", "Amount": 5, "State": "ToBeReviewed", "Expiration": ""},
+            {"UPC": "11111", "Amount": 20, "State": "Good", "Expiration": "2025-06-15"},
+            {"UPC": "22222", "Amount": 3, "State": "Good", "Expiration": ""},
+        ]
+        for data in demo:
+            batch = Batch(data["UPC"], data["Amount"], data["State"])
+            if data["Expiration"]:
+                try:
+                    batch.SetExpirationDate(dt.datetime.strptime(data["Expiration"], "%Y-%m-%d"))
+                except ValueError:
+                    pass
+            self.StorageManager.AddBatch(batch)
+        self.searchEngine.Rebuild()
+        self._updateFilteredBatches()
+        debug_print("Demo batches added.")
+
+    # ---------- Validation (pending batches) ----------
+    def _validateBatch(self, tbBatch: dict) -> List[str]:
+        errors = []
+        upc = tbBatch["ProductUPC"].strip()
+        if not upc:
+            errors.append("Product UPC is required")
+        elif upc not in self.StorageManager.Products:
+            errors.append(f"Product UPC '{upc}' does not exist")
+        if tbBatch["Amount"] < 1:
+            errors.append("Amount must be at least 1")
+        if tbBatch["State"] not in ("Good", "ToBeReviewed"):
+            errors.append("State must be Good or ToBeReviewed")
+        if tbBatch["HasExpiration"]:
+            if not tbBatch["ExpirationDate"].strip():
+                errors.append("Expiration date is required")
+            else:
+                try:
+                    dt.datetime.strptime(tbBatch["ExpirationDate"], "%Y-%m-%d")
+                except ValueError:
+                    errors.append("Expiration date must be in YYYY-MM-DD format")
+        return errors
+
+    def _validateAll(self) -> bool:
+        self.BatchErrors = {}
+        all_valid = True
+        for idx, tbBatch in enumerate(self.ToBeBatches):
+            errs = self._validateBatch(tbBatch)
+            if errs:
+                all_valid = False
+                self.BatchErrors[idx] = errs
+        return all_valid
+
+    def _buildBatch(self, tbBatch):
+        batch = Batch(tbBatch["ProductUPC"], tbBatch["Amount"], tbBatch["State"])
+        if tbBatch["HasExpiration"] and tbBatch["ExpirationDate"].strip():
+            try:
+                batch.SetExpirationDate(dt.datetime.strptime(tbBatch["ExpirationDate"], "%Y-%m-%d"))
+            except ValueError:
+                pass
+        return batch
+
+    # ---------- Save pending batches ----------
+    def _saveBatches(self):
+        if not self.ToBeBatches:
+            debug_print("No batches to save.")
+            return
+        debug_print("Validating batches...")
+        if not self._validateAll():
+            debug_print("Validation failed. Errors:", self.BatchErrors)
+            imgui.open_popup("BatchSaveErrorsPopup")
+            return
+        debug_print("All batches valid. Saving...")
+        for tbBatch in self.ToBeBatches:
+            batch = self._buildBatch(tbBatch)
+            self.StorageManager.AddBatch(batch)
+            debug_print(f"Saved batch {batch.BatchID} for product {batch.ProductUPC}")
+        self.ToBeBatches.clear()
+        self.BatchErrors.clear()
+        self.searchEngine.Rebuild()
+        self._updateFilteredBatches()
+        debug_print("All batches saved.")
+
+    # ---------- Search ----------
+    def _updateFilteredBatches(self):
+        self._searching = True
+        start = time.perf_counter()
+        self.filteredBatchIDs = self._filterBatches(self.searchQuery)
+        self._searchTime = time.perf_counter() - start
+        self._searchResultsCount = len(self.filteredBatchIDs)
+        self._searching = False
+
+    def _filterBatches(self, query: str) -> List[int]:
+        if not query.strip():
+            return list(self.StorageManager.BatchByID.keys())
+
+        include = []
+        exclude = []
+        for token in query.split():
+            token = token.strip()
+            if not token:
+                continue
+            if token.startswith('-'):
+                exclude.append(token[1:].strip().lower())
+            else:
+                include.append(token.strip().lower())
+
+        include_sets = []
+        for kw in include:
+            s = self._getBatchIDsForKeyword(kw)
+            if s:
+                include_sets.append(s)
+
+        if include_sets:
+            result = min(include_sets, key=len)
+            for s in include_sets:
+                if s is not result:
+                    result = result.intersection(s)
+        else:
+            result = set(self.StorageManager.BatchByID.keys())
+
+        for kw in exclude:
+            s = self._getBatchIDsForKeyword(kw)
+            if s:
+                result = result.difference(s)
+
+        return sorted(result)
+
+    def _getBatchIDsForKeyword(self, keyword: str) -> Set[int]:
+        keyword = keyword.lower()
+        batch_ids = set()
+
+        if keyword in self.StorageManager.BatchKeywordIndex:
+            batch_ids.update(self.StorageManager.BatchKeywordIndex[keyword])
+
+        upcs = self.StorageManager.GetProductsByKeyword(keyword)
+        for upc in upcs:
+            if upc in self.StorageManager.ProductToBatchIndex:
+                batch_ids.update(self.StorageManager.ProductToBatchIndex[upc])
+
+        return batch_ids
+
+    def _applySuggestion(self, sugg):
+        tokens = self.searchQuery.split()
+        if not tokens:
+            self.searchQuery = sugg
+        else:
+            tokens[-1] = sugg
+            self.searchQuery = " ".join(tokens)
+
+        self._updateFilteredBatches()
+        self.showSuggestions = False
+        self._suggestionIndex = 0
+        self._justSelected = True
+        self._refocus = True
+
+    # ---------- UI: Real Batches (editable) ----------
+    def _drawBatch(self, batch):
+        batch_id = batch.BatchID
+
+        imgui.push_id(f"batch_{batch_id}")
+
+        # Display ID and product info (UPC + Name)
+        imgui.text(f"ID: {batch_id}")
+        imgui.same_line()
+
+        # Get product name
+        product = self.StorageManager.Products.get(batch.ProductUPC)
+        product_name = product.Name.Value if product else "Unknown"
+        imgui.text(f"UPC: {batch.ProductUPC} ({product_name})")
+        imgui.same_line()
+
+        # Amount – increased width to fit 4+ digits
+        imgui.set_next_item_width(em_size(6))
+        changed, amount = imgui.input_int("Amount", batch.Amount)
+        if changed:
+            batch.SetAmount(max(1, amount))
+            self._reindexBatch(batch)
+            self._updateFilteredBatches()
+
+        imgui.same_line()
+
+        # State – constrained width
+        imgui.set_next_item_width(em_size(6))
+        states = ["Good", "ToBeReviewed"]
+        current_idx = states.index(batch.State) if batch.State in states else 0
+        if imgui.begin_combo("State", states[current_idx]):
+            for idx, state in enumerate(states):
+                if imgui.selectable(state, idx == current_idx)[0]:
+                    batch.SetState(state)
+                    self._reindexBatch(batch)
+                    self._updateFilteredBatches()
+            imgui.end_combo()
+
+        imgui.same_line()
+
+        # Expiration
+        has_exp = batch.ExpirationDate is not None
+        changed, has_exp = imgui.checkbox("Has Expiration", has_exp)
+        if changed:
+            debug_print(f"Toggling expiration for batch {batch_id}: {has_exp}")
+            if has_exp:
+                # Set a default expiration date (today + 30 days)
+                batch.SetExpirationDate(dt.datetime.now() + dt.timedelta(days=30))
+            else:
+                batch.SetExpirationDate(None)
+            self._reindexBatch(batch)
+            self._updateFilteredBatches()
+
+        if batch.ExpirationDate:
+            current_date = batch.ExpirationDate.strftime("%Y-%m-%d")
+            imgui.same_line()
+            imgui.set_next_item_width(em_size(6))
+            changed, new_date_str = imgui.input_text("Expiration", current_date)
+            if changed and imgui.is_item_deactivated_after_edit():
+                try:
+                    new_date = dt.datetime.strptime(new_date_str, "%Y-%m-%d")
+                    batch.SetExpirationDate(new_date)
+                    self._reindexBatch(batch)
+                    self._updateFilteredBatches()
+                except ValueError:
+                    pass
+
+        imgui.same_line()
+        if imgui.button(f"Delete##{batch_id}"):
+            self._batchToDelete = ("real", batch_id)
+            imgui.open_popup("DeleteBatchConfirmPopup")
+
+        imgui.pop_id()
+
+    def ShowBatches(self):
+        # ---- Search bar with autocomplete ----
+        imgui.text("Search Batches:")
+        imgui.same_line()
+
+        if self._refocus:
+            imgui.set_keyboard_focus_here()
+            self._refocus = False
+
+        flags = imgui.InputTextFlags_.enter_returns_true
+        changed, self.searchQuery = imgui.input_text("##batch_search", self.searchQuery, flags=flags)
+
+        is_active = imgui.is_item_active()
+        if is_active and self.searchQuery != self._prevSearchQuery:
+            self._prevSearchQuery = self.searchQuery
+            debug_print(f"Live batch search: '{self.searchQuery}'")
+            self._updateSuggestions()
+
+        if changed:
+            if self.showSuggestions and len(self.searchSuggestions) > 0:
+                selected_suggestion = self.searchSuggestions[self._suggestionIndex]
+                debug_print(f"Selected suggestion via Enter: '{selected_suggestion}'")
+                self._applySuggestion(selected_suggestion)
+            else:
+                debug_print(f"Enter pressed (no suggestions), applying filter: '{self.searchQuery}'")
+                self._updateFilteredBatches()
+                self._suggestionIndex = 0
+                imgui.set_keyboard_focus_here()
+
+        # ---- Suggestions popup ----
+        input_rect_min = imgui.get_item_rect_min()
+        input_rect_max = imgui.get_item_rect_max()
+
+        if self.showSuggestions:
+            pos = ImVec2(input_rect_min.x, input_rect_max.y)
+            imgui.set_next_window_pos(pos)
+            imgui.set_next_window_size(ImVec2(input_rect_max.x - input_rect_min.x, 200))
+            window_flags = (
+                imgui.WindowFlags_.no_title_bar |
+                imgui.WindowFlags_.no_resize |
+                imgui.WindowFlags_.no_move |
+                imgui.WindowFlags_.no_focus_on_appearing |
+                imgui.WindowFlags_.no_scrollbar
+            )
+            imgui.begin("##batch_suggestions_window", None, window_flags)
+            debug_print(f"Drawing suggestions with {len(self.searchSuggestions)} items")
+            for idx, sugg in enumerate(self.searchSuggestions):
+                is_selected = (idx == self._suggestionIndex)
+                imgui.selectable(sugg, is_selected)
+                if imgui.is_item_clicked():
+                    debug_print(f"Clicked suggestion: '{sugg}'")
+                    self._applySuggestion(sugg)
+                if imgui.is_item_hovered():
+                    self._suggestionIndex = idx
+            imgui.end()
+
+        # ---- Keyboard navigation ----
+        if is_active and self.showSuggestions and len(self.searchSuggestions) > 0:
+            if self._suggestionIndex >= len(self.searchSuggestions):
+                self._suggestionIndex = len(self.searchSuggestions) - 1
+            if self._suggestionIndex < 0:
+                self._suggestionIndex = 0
+
+            if imgui.is_key_pressed(imgui.Key.up_arrow):
+                self._suggestionIndex = (self._suggestionIndex - 1) % len(self.searchSuggestions)
+                debug_print(f"Selection up: {self._suggestionIndex}")
+            if imgui.is_key_pressed(imgui.Key.down_arrow):
+                self._suggestionIndex = (self._suggestionIndex + 1) % len(self.searchSuggestions)
+                debug_print(f"Selection down: {self._suggestionIndex}")
+
+        # ---- Escape to close ----
+        if self.showSuggestions and imgui.is_key_pressed(imgui.Key.escape):
+            debug_print("Escape pressed, closing suggestions")
+            self.showSuggestions = False
+            self._suggestionIndex = 0
+            imgui.set_keyboard_focus_here()
+
+        # ---- Lost focus ----
+        if imgui.is_item_deactivated_after_edit() and not self.showSuggestions:
+            if self._justSelected:
+                debug_print("Deactivation after selection, ignoring")
+                self._justSelected = False
+            else:
+                debug_print(f"Lost focus, applying filter: '{self.searchQuery}'")
+                self._updateFilteredBatches()
+                self._suggestionIndex = 0
+
+        imgui.same_line()
+        if self._searching:
+            imgui.text("Searching...")
+        else:
+            if self.searchQuery.strip():
+                imgui.text(f"{self._searchResultsCount} results in {self._searchTime:.4f}s")
+            else:
+                imgui.text(f"{len(self.filteredBatchIDs)} batches")
+        imgui.separator()
+
+        if not self.filteredBatchIDs:
+            if self.searchQuery.strip():
+                imgui.text("No batches match your search.")
+            else:
+                imgui.text("No batches stored.")
+            return
+
+        if imgui.begin_child("BatchList", size=ImVec2(0, 0), child_flags=imgui.ChildFlags_.borders):
+            for batch_id in self.filteredBatchIDs:
+                batch = self.StorageManager.GetBatch(batch_id)
+                if batch:
+                    self._drawBatch(batch)
+            imgui.end_child()
+
+    def _updateSuggestions(self):
+        """Update batch search suggestions using SearchEngine."""
+        if not self.searchQuery.strip():
+            self.searchSuggestions = []
+            self.showSuggestions = False
+            debug_print("Empty query, clearing suggestions")
+            return
+
+        tokens = self.searchQuery.split()
+        last_token = tokens[-1] if tokens else ""
+        suggestions = []
+        if last_token:
+            raw = self.searchEngine.GetSuggestions(last_token)
+            for sugg in raw:
+                if " " not in sugg and sugg != last_token:
+                    suggestions.append(sugg)
+            self.searchSuggestions = suggestions[:10]
+        self.showSuggestions = bool(self.searchSuggestions)
+
+    # ---------- UI: Pending Batches ----------
+    def ShowToBeBatches(self):
+        # ---- Add button at top ----
+        if imgui.button("+ Add Batch"):
+            self.ToBeBatches.append(copy.deepcopy(self._batchTemplate))
+
+        imgui.same_line()
+        if imgui.button("Save Batches"):
+            self._saveBatches()
+
+        imgui.separator()
+
+        # ---- Render pending batches with scrolling ----
+        if not self.ToBeBatches:
+            imgui.text("No pending batches.")
+            return
+
+        if imgui.begin_child("PendingBatchesChild", size=ImVec2(0, 300), child_flags=imgui.ChildFlags_.borders):
+            i = 0
+            while i < len(self.ToBeBatches):
+                tbBatch = self.ToBeBatches[i]
+                header = f"Batch {i+1} (UPC: {tbBatch['ProductUPC'] if tbBatch['ProductUPC'] else '??? '})"
+                if i in self.BatchErrors:
+                    imgui.push_style_color(imgui.Col_.header, ImVec4(1.0, 0.3, 0.3, 1.0))
+                opened = imgui.collapsing_header(header)
+                if i in self.BatchErrors:
+                    imgui.pop_style_color()
+
+                if opened:
+                    imgui.push_id(f"tbBatch{i}")
+
+                    if i in self.BatchErrors and imgui.is_item_hovered():
+                        imgui.begin_tooltip()
+                        for err in self.BatchErrors[i]:
+                            imgui.text(err)
+                        imgui.end_tooltip()
+
+                    # ---- Product UPC (searchable combo) ----
+                    all_upcs = list(self.StorageManager.Products.keys())
+                    product_options = []
+                    for upc in all_upcs:
+                        product = self.StorageManager.Products[upc]
+                        product_options.append(f"{upc} - {product.Name.Value}")
+
+                    current_upc = tbBatch["ProductUPC"]
+                    current_display = ""
+                    for opt in product_options:
+                        if opt.startswith(current_upc):
+                            current_display = opt
+                            break
+
+                    if imgui.begin_combo("Product UPC", current_display):
+                        changed, self._productFilter = imgui.input_text("Filter", self._productFilter)
+                        for idx, opt in enumerate(product_options):
+                            if self._productFilter.lower() not in opt.lower():
+                                continue
+                            if imgui.selectable(opt, opt == current_display)[0]:
+                                upc = opt.split(" - ")[0]
+                                tbBatch["ProductUPC"] = upc
+                                if i in self.BatchErrors:
+                                    self.BatchErrors[i] = []
+                        imgui.end_combo()
+
+                    # ---- Amount (width constrained) ----
+                    imgui.set_next_item_width(em_size(4))
+                    changed, amount = imgui.input_int("Amount", tbBatch["Amount"])
+                    if changed:
+                        tbBatch["Amount"] = max(1, amount)
+
+                    # ---- State ----
+                    states = ["Good", "ToBeReviewed"]
+                    current_idx2 = states.index(tbBatch["State"]) if tbBatch["State"] in states else 0
+                    if imgui.begin_combo("State", states[current_idx2]):
+                        for idx, state in enumerate(states):
+                            if imgui.selectable(state, idx == current_idx2)[0]:
+                                tbBatch["State"] = state
+                        imgui.end_combo()
+
+                    # ---- Expiration ----
+                    changed, has_exp = imgui.checkbox("Has Expiration", tbBatch["HasExpiration"])
+                    if changed:
+                        tbBatch["HasExpiration"] = has_exp
+                    if tbBatch["HasExpiration"]:
+                        imgui.set_next_item_width(em_size(6))
+                        changed, exp_str = imgui.input_text("Expiration Date (YYYY-MM-DD)", tbBatch["ExpirationDate"])
+                        if changed:
+                            tbBatch["ExpirationDate"] = exp_str
+
+                    # ---- Delete button ----
+                    if imgui.button("Delete"):
+                        del self.ToBeBatches[i]
+                        self.BatchErrors.pop(i, None)
+                        imgui.pop_id()
+                        continue
+
+                    imgui.pop_id()
+                i += 1
+
+            imgui.end_child()
+
+        # ---- Error popup ----
+        if imgui.begin_popup("BatchSaveErrorsPopup"):
+            imgui.text("Validation errors occurred. Please fix them:")
+            for idx, errs in self.BatchErrors.items():
+                imgui.text(f"Batch {idx+1}:")
+                for err in errs:
+                    imgui.bullet_text(err)
+            if imgui.button("OK"):
+                imgui.close_current_popup()
+            imgui.end_popup()
+
+        # ---- Delete confirmation popup ----
+        if self._batchToDelete is not None:
+            imgui.open_popup("DeleteBatchConfirmPopup")
+        if imgui.begin_popup_modal("DeleteBatchConfirmPopup", None, imgui.WindowFlags_.always_auto_resize)[0]:
+            if self._batchToDelete:
+                if self._batchToDelete[0] == "real":
+                    batch_id = self._batchToDelete[1]
+                    imgui.text(f"Delete batch #{batch_id}?")
+                    if imgui.button("Yes"):
+                        self.StorageManager.RemoveBatch(batch_id)
+                        self.searchEngine.Rebuild()
+                        self._updateFilteredBatches()
+                        self._batchToDelete = None
+                        imgui.close_current_popup()
+                    imgui.same_line()
+                    if imgui.button("No"):
+                        self._batchToDelete = None
+                        imgui.close_current_popup()
+                else:
+                    imgui.close_current_popup()
+            else:
+                imgui.close_current_popup()
+            imgui.end_popup()
+
+    # ---------- Main Draw ----------
+    def Draw(self):
+        imgui.push_id("BatchEditor")
+
+        imgui.text("Real Batches")
+        imgui.separator()
+        self.ShowBatches()
+
+        imgui.text("Pending Batches")
+        imgui.separator()
+        self.ShowToBeBatches()
+
+        imgui.pop_id()
+
+
+# ---------- MainApp ----------
 class MainApp:
     def __init__(self, storageManager, productEnum):
         self.Filter = imgui.TextFilter()
         self.ProductEditor = ProductEditor(storageManager, productEnum)
         self.EnumEditor = EnumEditor(productEnum)
+        self.BatchEditor = BatchEditor(storageManager)
         self.StorageManager = storageManager
 
     def Draw(self):
         if imgui.begin_tab_bar("MainTab"):
+            # Product Editor tab
             opened, visible = imgui.begin_tab_item("Product Editor")
             if opened:
                 self.ProductEditor.Draw()
                 self.EnumEditor.Draw()
-            imgui.end_tab_item()
-        imgui.end_tab_bar()
+                imgui.end_tab_item()
+
+            # Database Editor tab (Batches)
+            opened, visible = imgui.begin_tab_item("Database Editor")
+            if opened:
+                self.BatchEditor.Draw()
+                imgui.end_tab_item()
+
+            imgui.end_tab_bar()
 
         # self.Filter.draw('Search ("incl,-excl") ("error")', em_size(25))
 

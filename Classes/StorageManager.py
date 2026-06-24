@@ -71,6 +71,9 @@ class StorageManager:
 
         self._indexBatch(batch)
 
+    def GetBatch(self, batchID: int):
+        return self.BatchByID[batchID]
+
     def RemoveBatch(self, batchID: int):
         if batchID not in self.BatchByID:
             return

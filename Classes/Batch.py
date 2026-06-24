@@ -8,8 +8,8 @@ Data = {
 Keywords = {"BatchID", "Amount", "State", "ExpirationDate", "ImportedDate"}
 
 def _getNextBatchID():
-    Data.BatchID += 1
-    return Data.BatchID
+    Data["BatchID"] += 1
+    return Data["BatchID"]
 
 class Batch:
     def __init__(self, UPC: str, amount: int = 1, state: Literal["Good", "ToBeReviewed"] = "Good"):
@@ -17,7 +17,7 @@ class Batch:
         self.ProductUPC = UPC
         self.Amount = amount
         self.State = state
-        self.ImportedDate = dt.now()
+        self.ImportedDate = dt.datetime.now()
         self.ExpirationDate: dt.datetime | None = None
 
     def SetExpirationDate(self, expirationDate: dt.datetime):
