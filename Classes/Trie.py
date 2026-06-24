@@ -76,4 +76,4 @@ class Trie:
 
         # if not lastNonWord: return
 
-        del lastNonWord.Words[lastNonWordChar]
+        del lastNonWord.Words[lastNonWordChar]  
