@@ -34,5 +34,3 @@ class Batch:
 
     def SetState(self, state: Literal["Good", "ToBeReviewed"]):
         self.State = state
-
-    

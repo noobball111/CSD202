@@ -10,8 +10,3 @@ prodEnum = ProductEnum()
 DEFAULT_SAVE_FILE = "Data/Data.txt"
 
 UIService.Init(manager, prodEnum)
-# FileLoader = FileLoader()
-
-# FileLoader.Load(None or DEFAULT_SAVE_FILE)
-
-# print(FileLoader.Loaded)
