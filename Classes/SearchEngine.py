@@ -44,6 +44,17 @@ class SearchEngine:
                 self._mainTrie.Add(key)
                 debug_print(f"Added to batch trie: {key}")
 
+            # Numeric batch fields should be discoverable for autocomplete.
+            numeric_fields = ["amount", "importeddate", "expirationdate"]
+            for field in numeric_fields:
+                self._mainTrie.Add(field)
+                self._mainTrie.Add(f"{field}:")
+                self._mainTrie.Add(f"{field}>")
+                self._mainTrie.Add(f"{field}>=")
+                self._mainTrie.Add(f"{field}<")
+                self._mainTrie.Add(f"{field}<=")
+                self._mainTrie.Add(f"{field}=")
+
             # Also add ALL product keywords so we can search batches by product attributes
             product_keys = list(self.storageManager.ProductKeywordIndex.keys())
             debug_print(f"Product keys added to batch trie: {product_keys}")
