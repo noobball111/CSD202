@@ -121,6 +121,7 @@ class EnumEditor:
         if changed:
             self._generateCount = max(1, self._generateCount)
         imgui.same_line()
+        imgui.set_next_item_width(em_size(2))
         if imgui.button("Generate Enums"):
             self._GenerateRandomEnums(self._generateCount)
 
@@ -775,6 +776,7 @@ class ProductEditor:
         if changed:
             self.numProductsToGenerate = max(1, self.numProductsToGenerate)
         imgui.same_line()
+        imgui.set_next_item_width(em_size(2))
         if imgui.button("Generate Products"):
             self._GenerateRandomProducts(self.numProductsToGenerate)
         imgui.same_line()
@@ -1448,6 +1450,8 @@ class BatchEditor:
         flags = imgui.InputTextFlags_.enter_returns_true
         if self._refocus:
             flags |= imgui.InputTextFlags_.auto_select_all
+
+        imgui.set_next_item_width(em_size(15))
         changed, self.searchQuery = imgui.input_text("##batch_search", self.searchQuery, flags=flags)
         self._refocus = False
 
@@ -1757,6 +1761,7 @@ class BatchEditor:
         if changed:
             self._generateBatchCount = max(1, self._generateBatchCount)
         imgui.same_line()
+        imgui.set_next_item_width(em_size(2))
         if imgui.button("Generate Batches"):
             self._GenerateRandomBatches(self._generateBatchCount)
 
