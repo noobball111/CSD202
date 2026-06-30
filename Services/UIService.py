@@ -1170,6 +1170,7 @@ class BatchEditor:
             return
         upc_list = list(self.StorageManager.Products.keys())
         states = ["Good", "ToBeReviewed"]
+        # Random expiration dates: for n batches, allow up to n/2 days ahead.
         max_days = max(0, count // 2)
         now = dt.datetime.now()
         for i in range(count):
@@ -1760,12 +1761,7 @@ class BatchEditor:
             imgui.push_style_color(imgui.Col_.text, ImVec4(1.0, 0.1, 0.1, 1.0))
 
         imgui.push_id(f"queue_batch_{batch_id}")
-        
-        # Display queue order position
-        queue_pos = batch.QueuePosition if batch.QueuePosition is not None else "N/A"
-        imgui.text(f"Queue Pos: {queue_pos}")
-        imgui.same_line()
-        
+
         imgui.text(f"ID: {batch_id}")
         imgui.same_line()
 

@@ -5,13 +5,14 @@ from typing import Set
 from .Product import Product, Attribute
 from .Batch import Batch
 from . import Batch as BatchModule
+from .Queue import Queue
 
 
 class   StorageManager:
     def __init__(self):
         self.Products = dict()
         self.BatchByID = dict()
-        self.BatchQueue = []
+        self.BatchQueue = Queue()
 
         self.ProductAttributeNameCounts = {}
         self.ProductEnum = None
@@ -150,15 +151,16 @@ class   StorageManager:
         if not self.BatchQueue:
             return
 
+        ActiveBatchIDs = [bid for bid in self.BatchQueue if bid in self.BatchByID]
         SortedQueue = sorted(
-            self.BatchQueue,
+            ActiveBatchIDs,
             key=lambda bid: (
                 self.BatchByID[bid].ExpirationDate if self.BatchByID[bid].ExpirationDate is not None else dt.datetime.max,
                 self.BatchByID[bid].ImportedDate,
             )
         )
 
-        self.BatchQueue = []
+        self.BatchQueue.clear()
         for position, batchID in enumerate(SortedQueue, start=1):
             batch = self.BatchByID[batchID]
             self._removeBatch(batch)
@@ -318,7 +320,9 @@ class   StorageManager:
             MaxBatchId = max(MaxBatchId, batch.BatchID)
 
         if self.BatchByID:
-            self.BatchQueue = list(self.BatchByID.keys())
+            self.BatchQueue.clear()
+            for batchID in self.BatchByID.keys():
+                self.BatchQueue.append(batchID)
             self._rebuildBatchQueue()
 
         if MaxBatchId >= 0:

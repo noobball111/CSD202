@@ -7,6 +7,28 @@ class Queue:
         self.Tail: Node|None = None
         self.size = 0
 
+    def __len__(self) -> int:
+        return self.size
+
+    def __bool__(self) -> bool:
+        return self.size > 0
+
+    def __iter__(self):
+        curr = self.Head
+        while curr is not None:
+            yield curr.val
+            curr = curr.Next
+
+    def __eq__(self, other) -> bool:
+        if isinstance(other, Queue):
+            return self.GetAllItems() == other.GetAllItems()
+        if isinstance(other, (list, tuple)):
+            return self.GetAllItems() == list(other)
+        return False
+
+    def __repr__(self) -> str:
+        return f"Queue({self.GetAllItems()})"
+
     def enqueue(self, val):
         """Add an item to the end of the queue"""
         newNode = Node(val)
@@ -20,20 +42,60 @@ class Queue:
             self.Tail = newNode
 
         self.size += 1
+
+    def append(self, val):
+        """Alias for enqueue for list-like compatibility."""
+        self.enqueue(val)
+
+    def clear(self):
+        """Remove all items from the queue."""
+        self.Head = None
+        self.Tail = None
+        self.size = 0
+
+    def remove(self, val):
+        """Remove the first matching value from the queue."""
+        if self.size == 0:
+            return False
+
+        curr = self.Head
+        while curr is not None:
+            if curr.val == val:
+                break
+            curr = curr.Next
+
+        if curr is None:
+            return False
+
+        if curr == self.Head:
+            self.dequeue()
+        elif curr == self.Tail:
+            self.Tail = self.Tail.Prev
+            if self.Tail:
+                self.Tail.Next = None
+            self.size -= 1
+        else:
+            if curr.Next:
+                curr.Next.Prev = curr.Prev
+            if curr.Prev:
+                curr.Prev.Next = curr.Next
+            self.size -= 1
+
+        return True
     
     def dequeue(self):
         """Remove and return the first item from the queue"""
         if self.size == 0:
             return None
-        
+
         val = self.Head.val
         if self.size == 1:
             self.Head = None
             self.Tail = None
         else:
-            self.Head = self.Head.Prev
-            self.Head.Next = None
-        
+            self.Head = self.Head.Next
+            self.Head.Prev = None
+
         self.size -= 1
         return val
 
@@ -48,7 +110,7 @@ class Queue:
         while curr is not None:
             if getattr(curr.val, attr, None) == val:
                 break
-            curr = curr.Prev
+            curr = curr.Next
 
         if curr is None:
             return False
@@ -89,7 +151,7 @@ class Queue:
                 if closest_diff is None or diff < closest_diff:
                     closest_diff = diff
                     closest_node = curr
-            curr = curr.Prev
+            curr = curr.Next
 
         if closest_node is None:
             return False
@@ -98,9 +160,9 @@ class Queue:
         if closest_node == self.Head:
             self.dequeue()
         elif closest_node == self.Tail:
-            self.Tail = self.Tail.Next
+            self.Tail = self.Tail.Prev
             if self.Tail:
-                self.Tail.Prev = None
+                self.Tail.Next = None
             self.size -= 1
         else:
             if closest_node.Next:
@@ -117,7 +179,7 @@ class Queue:
         curr = self.Head
         while curr is not None:
             items.append(curr.val)
-            curr = curr.Prev
+            curr = curr.Next
         return items
 
     def Size(self):

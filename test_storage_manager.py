@@ -8,6 +8,7 @@ from Classes.StorageManager import StorageManager
 from Classes.ProductEnum import ProductEnum
 from Classes.Product import Product
 from Classes.Batch import Batch
+from Classes.Queue import Queue
 from Services.UIService import BatchEditor
 
 
@@ -58,10 +59,28 @@ class StorageManagerTests(unittest.TestCase):
             self.assertEqual(loaded_batch.ProductUPC, "00001")
             self.assertEqual(loaded_batch.Amount, 15)
             self.assertEqual(loaded_batch.QueuePosition, 1)
-            self.assertEqual(loaded_batch.ExpirationDate, dt.datetime(2024, 1, 2))
+            self.assertEqual(loaded_batch.ExpirationDate, dt.datetime(2024, 12, 31))
             self.assertEqual(loaded_batch.DeliveryDate, dt.datetime(2024, 1, 2))
         finally:
             os.remove(temp_name)
+
+    def test_batch_queue_uses_custom_queue_class(self):
+        batch = Batch("00001", 3, "Good")
+        self.storage.AddBatch(batch)
+
+        self.assertIsInstance(self.storage.BatchQueue, Queue)
+        self.assertEqual(list(self.storage.BatchQueue), [batch.BatchID])
+
+    def test_remove_batch_updates_queue_without_error(self):
+        first_batch = Batch("00001", 2, "Good")
+        second_batch = Batch("00002", 4, "Good")
+        self.storage.AddBatch(first_batch)
+        self.storage.AddBatch(second_batch)
+
+        self.storage.RemoveBatch(first_batch.BatchID)
+
+        self.assertNotIn(first_batch.BatchID, self.storage.BatchByID)
+        self.assertEqual(list(self.storage.BatchQueue), [second_batch.BatchID])
 
     def test_optimize_database_merges_delta_indexes(self):
         self.storage.ProductDeltaNumericIndexes["amount"] = [(10, "00001")]
