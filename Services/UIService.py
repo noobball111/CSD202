@@ -1281,6 +1281,7 @@ class BatchEditor:
         self._queueSearching = True
         start = time.perf_counter()
         batch_ids = self._filterBatches(self.queueSearchQuery)
+        batch_ids = [bid for bid in batch_ids if bid in self.StorageManager.BatchByID]
         self.queueFilteredBatchIDs = self._sortQueueBatchIDs(batch_ids)
         self._queueSearchTime = time.perf_counter() - start
         self._queueSearchResultsCount = len(self.queueFilteredBatchIDs)
@@ -1759,6 +1760,12 @@ class BatchEditor:
             imgui.push_style_color(imgui.Col_.text, ImVec4(1.0, 0.1, 0.1, 1.0))
 
         imgui.push_id(f"queue_batch_{batch_id}")
+        
+        # Display queue order position
+        queue_pos = batch.QueuePosition if batch.QueuePosition is not None else "N/A"
+        imgui.text(f"Queue Pos: {queue_pos}")
+        imgui.same_line()
+        
         imgui.text(f"ID: {batch_id}")
         imgui.same_line()
 
@@ -1808,8 +1815,8 @@ class BatchEditor:
             self._deliverQueueBatch(batch_id)
 
         imgui.same_line()
-        if batch.ExpirationDate and imgui.button(f"Deliver same expiry##queue_same_{batch_id}"):
-            self._deliverSameExpiration(batch.ExpirationDate)
+        if batch.ExpirationDate and imgui.button(f"Deliver same date##queue_same_{batch_id}"):
+            self._deliverSameDateBatches(batch.ExpirationDate)
 
         imgui.pop_id()
 
@@ -1835,13 +1842,41 @@ class BatchEditor:
     def _deliverSameExpiration(self, expiration_date: dt.datetime):
         if expiration_date is None:
             return
-        batch_ids = [batch.BatchID for batch in self.StorageManager.BatchByID.values() if batch.ExpirationDate == expiration_date]
+        target_date = expiration_date.date()
+        batch_ids = [
+            batch.BatchID
+            for batch in self.StorageManager.BatchByID.values()
+            if batch.ExpirationDate is not None and batch.ExpirationDate.date() == target_date
+        ]
         for batch_id in batch_ids:
             self.StorageManager.RemoveBatch(batch_id)
         self.StorageManager.SaveDatabase("data.txt")
         self.searchEngine.Rebuild()
         self._updateFilteredBatches()
         self._updateQueueFilteredBatches()
+
+    def _deliverSameDateBatches(self, target_date: dt.datetime):
+        """Deliver (delete) all batches with the same expiration date as target_date."""
+        if target_date is None:
+            return
+        
+        target_date_only = target_date.date()
+        batch_ids_to_deliver = []
+        
+        # Find all batches with matching expiration date
+        for batch_id, batch in self.StorageManager.BatchByID.items():
+            if batch.ExpirationDate is not None and batch.ExpirationDate.date() == target_date_only:
+                batch_ids_to_deliver.append(batch_id)
+        
+        # Deliver all matching batches
+        if batch_ids_to_deliver:
+            for batch_id in batch_ids_to_deliver:
+                self.StorageManager.RemoveBatch(batch_id)
+            self.StorageManager.SaveDatabase("data.txt")
+            self.searchEngine.Rebuild()
+            self._updateFilteredBatches()
+            self._updateQueueFilteredBatches()
+            debug_print(f"Delivered {len(batch_ids_to_deliver)} batches with expiration date {target_date_only}")
 
     def _updateSuggestions(self):
         if not self.searchQuery.strip():
@@ -1991,6 +2026,7 @@ class BatchEditor:
                         self.StorageManager.RemoveBatch(batch_id)
                         self.searchEngine.Rebuild()
                         self._updateFilteredBatches()
+                        self._updateQueueFilteredBatches()
                         self._batchToDelete = None
                         imgui.close_current_popup()
                     imgui.same_line()
@@ -2006,7 +2042,7 @@ class BatchEditor:
 
     # ---------- Queue Editor UI ----------
     def DrawQueueEditor(self):
-        imgui.text("Queue Editor")
+        imgui.text("Queue Editor - View and manage warehouse queue")
         imgui.separator()
 
         imgui.text("Search Queue:")
@@ -2125,6 +2161,7 @@ class BatchEditor:
         imgui.same_line()
         if imgui.button("Deliver Filtered"):
             self._deliverFilteredQueueBatches()
+        
         imgui.same_line()
         if imgui.button("Save Database"):
             saved = self.StorageManager.SaveDatabase("data.txt")
@@ -2143,9 +2180,15 @@ class BatchEditor:
             clipper = imgui.ListClipper()
             clipper.begin(len(self.queueFilteredBatchIDs))
             while clipper.step():
-                for idx in range(clipper.display_start, clipper.display_end):
-                    batch_id = self.queueFilteredBatchIDs[idx]
-                    batch = self.StorageManager.GetBatch(batch_id)
+                batch_ids = self.queueFilteredBatchIDs
+                total = len(batch_ids)
+                start = min(clipper.display_start, total)
+                end = min(clipper.display_end, total)
+                for idx in range(start, end):
+                    if idx >= len(batch_ids):
+                        break
+                    batch_id = batch_ids[idx]
+                    batch = self.StorageManager.BatchByID.get(batch_id)
                     if batch:
                         self._drawQueueBatch(batch)
             clipper.end()
