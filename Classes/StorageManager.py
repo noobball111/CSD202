@@ -11,6 +11,7 @@ class   StorageManager:
     def __init__(self):
         self.Products = dict()
         self.BatchByID = dict()
+        self.BatchQueue = []
 
         self.ProductAttributeNameCounts = {}
         self.ProductEnum = None
@@ -51,7 +52,7 @@ class   StorageManager:
 
     def GetBatchIDsByNumericComparison(self, field: str, operator: str, value: float) -> Set[int]:
         field = field.lower()
-        batch_ids = set()
+        BatchIds = set()
 
         def matches(v: float) -> bool:
             if operator == ">":
@@ -66,14 +67,14 @@ class   StorageManager:
                 return v == value
             return False
 
-        for index_dict in (self.BatchNumericIndexes, self.BatchDeltaNumericIndexes):
-            if field not in index_dict:
+        for IndexDict in (self.BatchNumericIndexes, self.BatchDeltaNumericIndexes):
+            if field not in IndexDict:
                 continue
-            for v, batch_id in index_dict[field]:
+            for v, BatchId in IndexDict[field]:
                 if matches(v):
-                    batch_ids.add(batch_id)
+                    BatchIds.add(BatchId)
 
-        return batch_ids
+        return BatchIds
 
     # ---------- Product management ----------
     def AddProduct(self, product):
@@ -94,7 +95,12 @@ class   StorageManager:
     def AddBatch(self, batch):
         if batch.BatchID in self.BatchByID:
             return
+
+        BatchPosition = len(self.BatchQueue) + 1
+        self._setBatchQueueDates(batch, BatchPosition)
+
         self.BatchByID[batch.BatchID] = batch
+        self.BatchQueue.append(batch.BatchID)
 
         if batch.ProductUPC not in self.ProductToBatchIndex:
             self.ProductToBatchIndex[batch.ProductUPC] = set()
@@ -110,17 +116,51 @@ class   StorageManager:
             return
         batch = self.BatchByID.pop(batchID)
 
+        if batchID in self.BatchQueue:
+            self.BatchQueue.remove(batchID)
+
         self.ProductToBatchIndex[batch.ProductUPC].remove(batchID)
         if not self.ProductToBatchIndex[batch.ProductUPC]:
             del self.ProductToBatchIndex[batch.ProductUPC]
 
         self._removeBatch(batch)
+        self._rebuildBatchQueue()
 
     def BulkAddBatches(self, batches):
         for batch in batches:
             if self.DoesBatchIDExist(batch):
                 continue
             self.AddBatch(batch)
+
+    def ProcessBatch(self, batchID: int, FilePath: str = "data.txt"):
+        """Process (deliver) a batch by removing it from storage and saving the database."""
+        if batchID not in self.BatchByID:
+            return False
+        self.RemoveBatch(batchID)
+        return self.SaveDatabase(FilePath)
+
+    def _setBatchQueueDates(self, batch, position: int):
+        batch.QueuePosition = position
+        QueueDate = batch.ImportedDate + dt.timedelta(days=position)
+        batch.ExpirationDate = QueueDate
+        batch.DeliveryDate = QueueDate
+
+    def _rebuildBatchQueue(self):
+        if not self.BatchQueue:
+            return
+
+        SortedQueue = sorted(
+            self.BatchQueue,
+            key=lambda bid: self.BatchByID[bid].QueuePosition if self.BatchByID[bid].QueuePosition is not None else self._dateToNumeric(self.BatchByID[bid].ImportedDate)
+        )
+
+        self.BatchQueue = []
+        for position, batchID in enumerate(SortedQueue, start=1):
+            batch = self.BatchByID[batchID]
+            self._removeBatch(batch)
+            self._setBatchQueueDates(batch, position)
+            self._indexBatch(batch)
+            self.BatchQueue.append(batchID)
 
     def RemoveBulkBatches(self, batchIDs):
         for batchID in batchIDs:
@@ -149,7 +189,7 @@ class   StorageManager:
     def SetProductEnum(self, productEnum):
         self.ProductEnum = productEnum
 
-    def SaveDatabase(self, file_path: str):
+    def SaveDatabase(self, FilePath: str):
         payload = {
             "products": [],
             "batches": [],
@@ -167,30 +207,30 @@ class   StorageManager:
 
         if self.ProductEnum is not None:
             payload["enums"] = {
-                enum_name: {
-                    "type": self.ProductEnum.GetType(enum_name),
-                    "values": self.ProductEnum.GetValues(enum_name),
+                EnumName: {
+                    "type": self.ProductEnum.GetType(EnumName),
+                    "values": self.ProductEnum.GetValues(EnumName),
                 }
-                for enum_name in self.ProductEnum.EnumNames()
+                for EnumName in self.ProductEnum.EnumNames()
             }
 
         for product in self.Products.values():
-            product_data = {
+            ProductData = {
                 "UPC": product.UPC.Value,
                 "Name": product.Name.Value,
                 "attributes": [
                     {
-                        "name": attr_name,
+                        "name": AttrName,
                         "value": attr.Value,
                         "type": attr.Type,
                         "is_enum": attr.IsEnum,
-                        "enum_name": attr.EnumName,
+                        "EnumName": attr.EnumName,
                     }
-                    for attr_name, attr in product.__dict__.items()
-                    if not attr_name.startswith("_") and isinstance(attr, Attribute)
+                    for AttrName, attr in product.__dict__.items()
+                    if not AttrName.startswith("_") and isinstance(attr, Attribute)
                 ],
             }
-            payload["products"].append(product_data)
+            payload["products"].append(ProductData)
 
         for batch in self.BatchByID.values():
             payload["batches"].append({
@@ -200,25 +240,28 @@ class   StorageManager:
                 "State": batch.State,
                 "ImportedDate": batch.ImportedDate.isoformat(),
                 "ExpirationDate": batch.ExpirationDate.isoformat() if batch.ExpirationDate is not None else None,
+                "DeliveryDate": batch.DeliveryDate.isoformat() if batch.DeliveryDate is not None else None,
+                "QueuePosition": batch.QueuePosition,
             })
 
-        os.makedirs(os.path.dirname(file_path) or ".", exist_ok=True)
-        with open(file_path, "w", encoding="utf-8") as fh:
+        os.makedirs(os.path.dirname(FilePath) or ".", exist_ok=True)
+        with open(FilePath, "w", encoding="utf-8") as fh:
             json.dump(payload, fh, indent=2)
         return True
 
-    def LoadDatabase(self, file_path: str, productEnum=None):
-        if not os.path.exists(file_path):
+    def LoadDatabase(self, FilePath: str, productEnum=None):
+        if not os.path.exists(FilePath):
             return False
 
         try:
-            with open(file_path, "r", encoding="utf-8") as fh:
+            with open(FilePath, "r", encoding="utf-8") as fh:
                 payload = json.load(fh)
         except (json.JSONDecodeError, ValueError, OSError) as exc:
             return False
 
         self.Products.clear()
         self.BatchByID.clear()
+        self.BatchQueue.clear()
         self.ProductKeywordIndex.clear()
         self.BatchKeywordIndex.clear()
         self.ProductToBatchIndex.clear()
@@ -235,15 +278,15 @@ class   StorageManager:
             self.ProductEnum._enums.clear()
 
         enums = payload.get("enums", {})
-        for enum_name, enum_data in enums.items():
+        for EnumName, EnumData in enums.items():
             if self.ProductEnum is not None:
-                self.ProductEnum.NewEnum(enum_name, enum_data.get("type", "string"))
-                for val in enum_data.get("values", []):
-                    self.ProductEnum.AddToEnum(enum_name, val)
+                self.ProductEnum.NewEnum(EnumName, EnumData.get("type", "string"))
+                for val in EnumData.get("values", []):
+                    self.ProductEnum.AddToEnum(EnumName, val)
 
-        for product_data in payload.get("products", []):
-            product = Product(product_data["UPC"], product_data["Name"])
-            for attr in product_data.get("attributes", []):
+        for ProductData in payload.get("products", []):
+            product = Product(ProductData["UPC"], ProductData["Name"])
+            for attr in ProductData.get("attributes", []):
                 if attr["name"] in ("UPC", "Name"):
                     continue
                 product.AddAttribute(
@@ -251,26 +294,31 @@ class   StorageManager:
                     attr["value"],
                     attr["type"],
                     attr["is_enum"],
-                    attr.get("enum_name"),
+                    attr.get("EnumName"),
                 )
             self.Products[product.UPC.Value] = product
             self._indexProduct(product)
 
-        max_batch_id = -1
-        for batch_data in payload.get("batches", []):
-            batch = Batch(batch_data["ProductUPC"], batch_data["Amount"], batch_data["State"])
-            batch.BatchID = batch_data["BatchID"]
-            batch.ImportedDate = dt.datetime.fromisoformat(batch_data["ImportedDate"])
-            batch.ExpirationDate = dt.datetime.fromisoformat(batch_data["ExpirationDate"]) if batch_data.get("ExpirationDate") else None
+        MaxBatchId = -1
+        for BatchData in payload.get("batches", []):
+            batch = Batch(BatchData["ProductUPC"], BatchData["Amount"], BatchData["State"])
+            batch.BatchID = BatchData["BatchID"]
+            batch.ImportedDate = dt.datetime.fromisoformat(BatchData["ImportedDate"])
+            batch.ExpirationDate = dt.datetime.fromisoformat(BatchData["ExpirationDate"]) if BatchData.get("ExpirationDate") else None
+            batch.DeliveryDate = dt.datetime.fromisoformat(BatchData["DeliveryDate"]) if BatchData.get("DeliveryDate") else None
+            batch.QueuePosition = BatchData.get("QueuePosition")
             self.BatchByID[batch.BatchID] = batch
             if batch.ProductUPC not in self.ProductToBatchIndex:
                 self.ProductToBatchIndex[batch.ProductUPC] = set()
             self.ProductToBatchIndex[batch.ProductUPC].add(batch.BatchID)
-            self._indexBatch(batch)
-            max_batch_id = max(max_batch_id, batch.BatchID)
+            MaxBatchId = max(MaxBatchId, batch.BatchID)
 
-        if max_batch_id >= 0:
-            BatchModule.Data["BatchID"] = max_batch_id
+        if self.BatchByID:
+            self.BatchQueue = list(self.BatchByID.keys())
+            self._rebuildBatchQueue()
+
+        if MaxBatchId >= 0:
+            BatchModule.Data["BatchID"] = MaxBatchId
 
         self.OptimizeDatabase()
         return True
@@ -316,13 +364,13 @@ class   StorageManager:
             # Index the attribute name itself (e.g., "size", "price")
             self._addToProductKeyword(attr.lower(), upc)
 
-            value_str = str(data.Value).lower()
-            self._addToProductKeyword(value_str, upc)
+            ValueStr = str(data.Value).lower()
+            self._addToProductKeyword(ValueStr, upc)
             if data.Type == "string" and isinstance(data.Value, str):
-                for token in value_str.split():
+                for token in ValueStr.split():
                     self._addToProductKeyword(token, upc)
             # Field‑specific keyword for exact field search
-            self._addToProductKeyword(f"{attr.lower()}:{value_str}", upc)
+            self._addToProductKeyword(f"{attr.lower()}:{ValueStr}", upc)
 
     def _removeProduct(self, prod):
         upc = prod.UPC.Value
@@ -331,12 +379,12 @@ class   StorageManager:
                 continue
             self._removeProductAttributeName(attr)
             self._removeFromProductKeyword(attr.lower(), upc)
-            value_str = str(data.Value).lower()
-            self._removeFromProductKeyword(value_str, upc)
+            ValueStr = str(data.Value).lower()
+            self._removeFromProductKeyword(ValueStr, upc)
             if data.Type == "string" and isinstance(data.Value, str):
-                for token in value_str.split():
+                for token in ValueStr.split():
                     self._removeFromProductKeyword(token, upc)
-            self._removeFromProductKeyword(f"{attr.lower()}:{value_str}", upc)
+            self._removeFromProductKeyword(f"{attr.lower()}:{ValueStr}", upc)
 
     # ---------- Internal batch index helpers ----------
     def _addToBatchKeyword(self, key: str, batchID: int):
@@ -352,6 +400,16 @@ class   StorageManager:
             if not self.BatchKeywordIndex[key]:
                 del self.BatchKeywordIndex[key]
 
+    def _dateToNumeric(self, DateValue: dt.datetime) -> float:
+        DayValue = DateValue.toordinal()
+        seconds = (
+            DateValue.hour * 3600
+            + DateValue.minute * 60
+            + DateValue.second
+            + DateValue.microsecond / 1_000_000
+        )
+        return DayValue + seconds / 86400.0
+
     def _indexBatch(self, batch, useDelta=True):
         state = batch.State.lower()
         self._addToBatchKeyword(state, batch.BatchID)
@@ -365,9 +423,9 @@ class   StorageManager:
         addNumeric = self._addToBatchDeltaNumeric if useDelta else self._addToBatchNumeric
 
         addNumeric("amount", batch.Amount, batch.BatchID)
-        addNumeric("importeddate", batch.ImportedDate.timestamp(), batch.BatchID)
+        addNumeric("importeddate", self._dateToNumeric(batch.ImportedDate), batch.BatchID)
         if batch.ExpirationDate is not None:
-            addNumeric("expirationdate", batch.ExpirationDate.timestamp(), batch.BatchID)
+            addNumeric("expirationdate", self._dateToNumeric(batch.ExpirationDate), batch.BatchID)
 
     def _removeBatch(self, batch):
         state = batch.State.lower()
@@ -381,11 +439,11 @@ class   StorageManager:
         # Remove from numeric indexes (both main and delta)
         self._removeFromBatchNumeric("amount", batch.Amount, batch.BatchID, delta=True)
         self._removeFromBatchNumeric("amount", batch.Amount, batch.BatchID, delta=False)
-        self._removeFromBatchNumeric("importeddate", batch.ImportedDate.timestamp(), batch.BatchID, delta=True)
-        self._removeFromBatchNumeric("importeddate", batch.ImportedDate.timestamp(), batch.BatchID, delta=False)
+        self._removeFromBatchNumeric("importeddate", self._dateToNumeric(batch.ImportedDate), batch.BatchID, delta=True)
+        self._removeFromBatchNumeric("importeddate", self._dateToNumeric(batch.ImportedDate), batch.BatchID, delta=False)
         if batch.ExpirationDate is not None:
-            self._removeFromBatchNumeric("expirationdate", batch.ExpirationDate.timestamp(), batch.BatchID, delta=True)
-            self._removeFromBatchNumeric("expirationdate", batch.ExpirationDate.timestamp(), batch.BatchID, delta=False)
+            self._removeFromBatchNumeric("expirationdate", self._dateToNumeric(batch.ExpirationDate), batch.BatchID, delta=True)
+            self._removeFromBatchNumeric("expirationdate", self._dateToNumeric(batch.ExpirationDate), batch.BatchID, delta=False)
 
     def _addToBatchNumeric(self, field: str, value: int | float, batchID: int):
         field = field.lower()

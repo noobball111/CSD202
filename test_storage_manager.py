@@ -57,7 +57,9 @@ class StorageManagerTests(unittest.TestCase):
             loaded_batch = loaded.BatchByID[loaded_batch_ids[0]]
             self.assertEqual(loaded_batch.ProductUPC, "00001")
             self.assertEqual(loaded_batch.Amount, 15)
-            self.assertEqual(loaded_batch.ExpirationDate, dt.datetime(2024, 12, 31))
+            self.assertEqual(loaded_batch.QueuePosition, 1)
+            self.assertEqual(loaded_batch.ExpirationDate, dt.datetime(2024, 1, 2))
+            self.assertEqual(loaded_batch.DeliveryDate, dt.datetime(2024, 1, 2))
         finally:
             os.remove(temp_name)
 
@@ -72,6 +74,81 @@ class StorageManagerTests(unittest.TestCase):
         self.assertIn("amount", self.storage.BatchNumericIndexes)
         self.assertEqual(self.storage.ProductNumericIndexes["amount"], [(10, "00001")])
         self.assertEqual(self.storage.BatchNumericIndexes["amount"], [(5, 1)])
+
+    def test_load_database_queues_all_existing_batches(self):
+        product = Product("00004", "Queued Product")
+        product.AddAttribute("Color", "Blue", "string", True, "Color")
+        self.storage.AddProduct(product)
+
+        batch = Batch("00004", 8, "Good")
+        batch.BatchID = 42
+        batch.ImportedDate = dt.datetime(2024, 2, 1)
+
+        payload = {
+            "products": [
+                {
+                    "UPC": "00004",
+                    "Name": "Queued Product",
+                    "attributes": [
+                        {
+                            "name": "Color",
+                            "value": "Blue",
+                            "type": "string",
+                            "is_enum": True,
+                            "enum_name": "Color",
+                        }
+                    ],
+                }
+            ],
+            "batches": [
+                {
+                    "BatchID": 42,
+                    "ProductUPC": "00004",
+                    "Amount": 8,
+                    "State": "Good",
+                    "ImportedDate": "2024-02-01T00:00:00",
+                    "ExpirationDate": None,
+                    "DeliveryDate": None,
+                    "QueuePosition": None,
+                }
+            ],
+            "enums": {
+                "Color": {
+                    "type": "string",
+                    "values": ["Red", "Blue"],
+                }
+            },
+            "indexes": {
+                "product_keywords": {},
+                "batch_keywords": {},
+                "product_to_batch": {},
+                "product_numeric": {},
+                "product_delta_numeric": {},
+                "batch_numeric": {},
+                "batch_delta_numeric": {},
+            },
+        }
+
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".json") as temp_file:
+            temp_name = temp_file.name
+
+        try:
+            with open(temp_name, "w", encoding="utf-8") as fh:
+                json.dump(payload, fh)
+
+            new_enum = ProductEnum()
+            loaded = StorageManager()
+            loaded.SetProductEnum(new_enum)
+            result = loaded.LoadDatabase(temp_name, new_enum)
+            self.assertTrue(result)
+            self.assertEqual(len(loaded.BatchByID), 1)
+            loaded_batch = next(iter(loaded.BatchByID.values()))
+            self.assertEqual(loaded_batch.QueuePosition, 1)
+            self.assertEqual(loaded_batch.ExpirationDate, dt.datetime(2024, 2, 2))
+            self.assertEqual(loaded_batch.DeliveryDate, dt.datetime(2024, 2, 2))
+            self.assertEqual(loaded.BatchQueue, [loaded_batch.BatchID])
+        finally:
+            os.remove(temp_name)
 
     def test_get_products_by_keyword_returns_upc(self):
         product = Product("00002", "Another Product")
@@ -100,6 +177,28 @@ class StorageManagerTests(unittest.TestCase):
         self.assertIn("amount", suggestions)
         self.assertIn("amount:", suggestions)
         self.assertIn("amount>", suggestions)
+
+    def test_process_batch_removes_batch_and_saves(self):
+        product = Product("00003", "Deliver Product")
+        self.storage.AddProduct(product)
+
+        batch = Batch("00003", 5, "Good")
+        self.storage.AddBatch(batch)
+        self.assertIn(batch.BatchID, self.storage.BatchByID)
+
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".json") as temp_file:
+            temp_name = temp_file.name
+
+        try:
+            processed = self.storage.ProcessBatch(batch.BatchID, temp_name)
+            self.assertTrue(processed)
+            self.assertNotIn(batch.BatchID, self.storage.BatchByID)
+
+            with open(temp_name, "r", encoding="utf-8") as fh:
+                data = json.load(fh)
+            self.assertEqual(data["batches"], [])
+        finally:
+            os.remove(temp_name)
 
 
 if __name__ == "__main__":

@@ -1103,6 +1103,18 @@ class BatchEditor:
         self._refocus = False
         self._prevSearchQuery = ""
 
+        self.queueSearchQuery = ""
+        self.queueSearchSuggestions = []
+        self.queueShowSuggestions = False
+        self.queueFilteredBatchIDs = []
+        self._queueSearching = False
+        self._queueSearchTime = 0.0
+        self._queueSearchResultsCount = 0
+        self._queueSuggestionIndex = 0
+        self._queueJustSelected = False
+        self._queueRefocus = False
+        self._queuePrevSearchQuery = ""
+
         self._batchTemplate = {
             "ProductUPC": "",
             "Amount": 1,
@@ -1116,6 +1128,8 @@ class BatchEditor:
 
         if prefill_demo:
             self._prefillDemoBatches()
+
+        self._updateQueueFilteredBatches()
 
     # ---------- Index maintenance ----------
     def _reindexBatch(self, batch):
@@ -1166,6 +1180,7 @@ class BatchEditor:
             self.StorageManager.AddBatch(batch)
         self.searchEngine.Rebuild()
         self._updateFilteredBatches()
+        self._updateQueueFilteredBatches()
         debug_print(f"Generated {count} batches.")
 
     # ---------- Validation (pending batches) ----------
@@ -1236,6 +1251,7 @@ class BatchEditor:
         self.BatchErrors.clear()
         self.searchEngine.Rebuild()
         self._updateFilteredBatches()
+        self._updateQueueFilteredBatches()
         debug_print("All batches saved.")
 
     # ---------- Search ----------
@@ -1246,6 +1262,28 @@ class BatchEditor:
         self._searchTime = time.perf_counter() - start
         self._searchResultsCount = len(self.filteredBatchIDs)
         self._searching = False
+
+    def _updateQueueFilteredBatches(self):
+        self._queueSearching = True
+        start = time.perf_counter()
+        self.queueFilteredBatchIDs = self._filterBatches(self.queueSearchQuery)
+        self._queueSearchTime = time.perf_counter() - start
+        self._queueSearchResultsCount = len(self.queueFilteredBatchIDs)
+        self._queueSearching = False
+
+    def _applyQueueSuggestion(self, sugg):
+        tokens = self.queueSearchQuery.split()
+        if not tokens:
+            self.queueSearchQuery = sugg
+        else:
+            tokens[-1] = sugg
+            self.queueSearchQuery = " ".join(tokens)
+
+        self._updateQueueFilteredBatches()
+        self.queueShowSuggestions = False
+        self._queueSuggestionIndex = 0
+        self._queueJustSelected = True
+        self._queueRefocus = True
 
     def _filterBatches(self, query: str) -> List[int]:
         if not query.strip():
@@ -1592,6 +1630,122 @@ class BatchEditor:
 
         self._showDeletePopup()
 
+    def Draw(self):
+        self.ShowBatches()
+        imgui.separator()
+        self.ShowToBeBatches()
+
+    def _updateQueueSuggestions(self):
+        if not self.queueSearchQuery.strip():
+            self.queueSearchSuggestions = []
+            self.queueShowSuggestions = False
+            debug_print("Empty queue query, clearing suggestions")
+            return
+
+        tokens = self.queueSearchQuery.split()
+        last_token = tokens[-1] if tokens else ""
+        suggestions = []
+        if last_token:
+            raw = self.searchEngine.Autocomplete(last_token)
+            for sugg in raw:
+                if sugg != last_token:
+                    suggestions.append(sugg)
+            self.queueSearchSuggestions = suggestions[:10]
+        self.queueShowSuggestions = bool(self.queueSearchSuggestions)
+
+    def _drawQueueBatch(self, batch):
+        batch_id = batch.BatchID
+        expired = batch.ExpirationDate is not None and batch.ExpirationDate < dt.datetime.now()
+        low_amount = batch.Amount < 10
+
+        if expired or low_amount:
+            imgui.push_style_color(imgui.Col_.text, ImVec4(1.0, 0.1, 0.1, 1.0))
+
+        imgui.push_id(f"queue_batch_{batch_id}")
+        imgui.text(f"ID: {batch_id}")
+        imgui.same_line()
+
+        product = self.StorageManager.Products.get(batch.ProductUPC)
+        product_name = product.Name.Value if product else "Unknown"
+        imgui.text(f"UPC: {batch.ProductUPC} ({product_name})")
+        imgui.same_line()
+
+        imgui.set_next_item_width(em_size(8))
+        changed, amount = imgui.input_int("Amount", batch.Amount)
+        if changed:
+            batch.Amount = max(1, amount)
+            self._reindexBatch(batch)
+            self._updateFilteredBatches()
+            self._updateQueueFilteredBatches()
+
+        imgui.same_line()
+        imgui.text(f"Imported: {batch.ImportedDate.strftime('%Y-%m-%d')}")
+
+        imgui.same_line()
+        current_date = batch.ExpirationDate.strftime('%Y-%m-%d') if batch.ExpirationDate else ''
+        imgui.set_next_item_width(120.0)
+        changed, new_date_str = imgui.input_text(f"Expire##queue_expire_{batch_id}", current_date)
+        if changed and imgui.is_item_deactivated_after_edit():
+            try:
+                new_date = dt.datetime.strptime(new_date_str, "%Y-%m-%d")
+                batch.ExpirationDate = new_date
+                batch.DeliveryDate = new_date
+                self._reindexBatch(batch)
+                self._updateFilteredBatches()
+                self._updateQueueFilteredBatches()
+            except ValueError:
+                pass
+
+        if batch.ExpirationDate:
+            imgui.same_line()
+            imgui.text(f"Expires: {batch.ExpirationDate.strftime('%Y-%m-%d')}")
+        else:
+            imgui.same_line()
+            imgui.text("Expires: None")
+
+        if expired or low_amount:
+            imgui.pop_style_color()
+
+        imgui.same_line()
+        if imgui.button(f"Deliver##queue_deliver_{batch_id}"):
+            self._deliverQueueBatch(batch_id)
+
+        imgui.same_line()
+        if batch.ExpirationDate and imgui.button(f"Deliver same expiry##queue_same_{batch_id}"):
+            self._deliverSameExpiration(batch.ExpirationDate)
+
+        imgui.pop_id()
+
+    def _deliverQueueBatch(self, batch_id: int):
+        if batch_id not in self.StorageManager.BatchByID:
+            return
+        self.StorageManager.ProcessBatch(batch_id, "data.txt")
+        self.searchEngine.Rebuild()
+        self._updateFilteredBatches()
+        self._updateQueueFilteredBatches()
+
+    def _deliverFilteredQueueBatches(self):
+        if not self.queueFilteredBatchIDs:
+            return
+        batch_ids = list(self.queueFilteredBatchIDs)
+        for batch_id in batch_ids:
+            self.StorageManager.RemoveBatch(batch_id)
+        self.StorageManager.SaveDatabase("data.txt")
+        self.searchEngine.Rebuild()
+        self._updateFilteredBatches()
+        self._updateQueueFilteredBatches()
+
+    def _deliverSameExpiration(self, expiration_date: dt.datetime):
+        if expiration_date is None:
+            return
+        batch_ids = [batch.BatchID for batch in self.StorageManager.BatchByID.values() if batch.ExpirationDate == expiration_date]
+        for batch_id in batch_ids:
+            self.StorageManager.RemoveBatch(batch_id)
+        self.StorageManager.SaveDatabase("data.txt")
+        self.searchEngine.Rebuild()
+        self._updateFilteredBatches()
+        self._updateQueueFilteredBatches()
+
     def _updateSuggestions(self):
         if not self.searchQuery.strip():
             self.searchSuggestions = []
@@ -1618,6 +1772,15 @@ class BatchEditor:
         imgui.same_line()
         if imgui.button("Save Batches"):
             self._saveBatches()
+
+        imgui.same_line()
+        changed, self._generateBatchCount = imgui.input_int("##batch_gen_count", self._generateBatchCount)
+        if changed:
+            self._generateBatchCount = max(1, self._generateBatchCount)
+
+        imgui.same_line()
+        if imgui.button("Generate Random Batches"):
+            self._GenerateRandomBatches(self._generateBatchCount)
 
         imgui.separator()
 
@@ -1744,26 +1907,152 @@ class BatchEditor:
                 imgui.close_current_popup()
             imgui.end_popup()
 
-    # ---------- Main Draw ----------
-    def Draw(self):
-        imgui.text("Real Batches")
+    # ---------- Queue Editor UI ----------
+    def DrawQueueEditor(self):
+        imgui.text("Queue Editor")
         imgui.separator()
-        self.ShowBatches()
 
-        imgui.text("Pending Batches")
-        imgui.separator()
-        self.ShowToBeBatches()
-
-        imgui.separator()
-        imgui.text("Generate Batches:")
+        imgui.text("Search Queue:")
         imgui.same_line()
-        changed, self._generateBatchCount = imgui.input_int("##batch_gen_count", self._generateBatchCount)
+        if self._queueRefocus:
+            imgui.set_keyboard_focus_here()
+        flags = imgui.InputTextFlags_.enter_returns_true
+        if self._queueRefocus:
+            flags |= imgui.InputTextFlags_.auto_select_all
+
+        imgui.set_next_item_width(em_size(15))
+        changed, self.queueSearchQuery = imgui.input_text("##queue_search", self.queueSearchQuery, flags=flags)
+        self._queueRefocus = False
+
+        is_active = imgui.is_item_active()
+        if is_active and self.queueSearchQuery != self._queuePrevSearchQuery:
+            self._queuePrevSearchQuery = self.queueSearchQuery
+            debug_print(f"Live queue search: '{self.queueSearchQuery}'")
+            self._updateQueueSuggestions()
+
         if changed:
-            self._generateBatchCount = max(1, self._generateBatchCount)
+            if self.queueShowSuggestions and len(self.queueSearchSuggestions) > 0:
+                selected_suggestion = self.queueSearchSuggestions[self._queueSuggestionIndex]
+                debug_print(f"Selected queue suggestion via Enter: '{selected_suggestion}'")
+                self._applyQueueSuggestion(selected_suggestion)
+            else:
+                debug_print(f"Enter pressed (no queue suggestions), applying filter: '{self.queueSearchQuery}'")
+                self._updateQueueFilteredBatches()
+                self._queueSuggestionIndex = 0
+                imgui.set_keyboard_focus_here()
+
+        input_rect_min = imgui.get_item_rect_min()
+        input_rect_max = imgui.get_item_rect_max()
+
+        if self.queueShowSuggestions:
+            pos = ImVec2(input_rect_min.x, input_rect_max.y)
+            imgui.set_next_window_pos(pos)
+            imgui.set_next_window_size(ImVec2(input_rect_max.x - input_rect_min.x, 200))
+            window_flags = (
+                imgui.WindowFlags_.no_title_bar |
+                imgui.WindowFlags_.no_resize |
+                imgui.WindowFlags_.no_move |
+                imgui.WindowFlags_.no_focus_on_appearing |
+                imgui.WindowFlags_.no_scrollbar
+            )
+            imgui.begin("##queue_suggestions_window", None, window_flags)
+            debug_print(f"Drawing queue suggestions with {len(self.queueSearchSuggestions)} items")
+            for idx, sugg in enumerate(self.queueSearchSuggestions):
+                is_selected = (idx == self._queueSuggestionIndex)
+                imgui.selectable(sugg, is_selected)
+                if imgui.is_item_clicked():
+                    debug_print(f"Clicked queue suggestion: '{sugg}'")
+                    self._applyQueueSuggestion(sugg)
+                if imgui.is_item_hovered():
+                    self._queueSuggestionIndex = idx
+
+            win_pos = imgui.get_window_pos()
+            win_size = imgui.get_window_size()
+            win_rect_min = win_pos
+            win_rect_max = win_pos + win_size
+
+            if imgui.is_mouse_clicked(0):
+                mouse_pos = imgui.get_mouse_pos()
+                in_input = (
+                    input_rect_min.x <= mouse_pos.x <= input_rect_max.x and
+                    input_rect_min.y <= mouse_pos.y <= input_rect_max.y
+                )
+                in_window = (
+                    win_rect_min.x <= mouse_pos.x <= win_rect_max.x and
+                    win_rect_min.y <= mouse_pos.y <= win_rect_max.y
+                )
+                if not in_input and not in_window:
+                    debug_print("Mouse clicked outside queue suggestions, closing suggestions")
+                    self.queueShowSuggestions = False
+                    self._queueSuggestionIndex = 0
+
+            imgui.end()
+
+        if is_active and self.queueShowSuggestions and len(self.queueSearchSuggestions) > 0:
+            if self._queueSuggestionIndex >= len(self.queueSearchSuggestions):
+                self._queueSuggestionIndex = len(self.queueSearchSuggestions) - 1
+            if self._queueSuggestionIndex < 0:
+                self._queueSuggestionIndex = 0
+
+            if imgui.is_key_pressed(imgui.Key.up_arrow):
+                self._queueSuggestionIndex = (self._queueSuggestionIndex - 1) % len(self.queueSearchSuggestions)
+                debug_print(f"Queue selection up: {self._queueSuggestionIndex}")
+            if imgui.is_key_pressed(imgui.Key.down_arrow):
+                self._queueSuggestionIndex = (self._queueSuggestionIndex + 1) % len(self.queueSearchSuggestions)
+                debug_print(f"Queue selection down: {self._queueSuggestionIndex}")
+
+        if self.queueShowSuggestions and imgui.is_key_pressed(imgui.Key.escape):
+            debug_print("Escape pressed, closing queue suggestions")
+            self.queueShowSuggestions = False
+            self._queueSuggestionIndex = 0
+            imgui.set_keyboard_focus_here()
+
+        if imgui.is_item_deactivated_after_edit() and not self.queueShowSuggestions:
+            if self._queueJustSelected:
+                debug_print("Queue deactivation after selection, ignoring")
+                self._queueJustSelected = False
+            else:
+                debug_print(f"Lost queue focus, applying filter: '{self.queueSearchQuery}'")
+                self._updateQueueFilteredBatches()
+                self._queueSuggestionIndex = 0
+
         imgui.same_line()
-        imgui.set_next_item_width(em_size(2))
-        if imgui.button("Generate Batches"):
-            self._GenerateRandomBatches(self._generateBatchCount)
+        if self._queueSearching:
+            imgui.text("Searching...")
+        else:
+            if self.queueSearchQuery.strip():
+                imgui.text(f"{self._queueSearchResultsCount} results in {self._queueSearchTime:.4f}s")
+            else:
+                imgui.text(f"{len(self.queueFilteredBatchIDs)} batches")
+
+        imgui.same_line()
+        if imgui.button("Deliver Filtered"):
+            self._deliverFilteredQueueBatches()
+        imgui.same_line()
+        if imgui.button("Save Database"):
+            saved = self.StorageManager.SaveDatabase("data.txt")
+            debug_print(f"Save Database: {'success' if saved else 'failed'}")
+
+        imgui.separator()
+
+        if not self.queueFilteredBatchIDs:
+            if self.queueSearchQuery.strip():
+                imgui.text("No queue batches match your search.")
+            else:
+                imgui.text("No queue batches available.")
+            return
+
+        if imgui.begin_child("QueueBatchList", size=ImVec2(0, 0), child_flags=imgui.ChildFlags_.borders):
+            clipper = imgui.ListClipper()
+            clipper.begin(len(self.queueFilteredBatchIDs))
+            while clipper.step():
+                for idx in range(clipper.display_start, clipper.display_end):
+                    batch_id = self.queueFilteredBatchIDs[idx]
+                    batch = self.StorageManager.GetBatch(batch_id)
+                    if batch:
+                        self._drawQueueBatch(batch)
+            clipper.end()
+        imgui.end_child()
 
 
 # ---------- MainApp ----------
@@ -1781,6 +2070,7 @@ class MainApp:
         self.StorageManager.OptimizeDatabase()
         self.ProductEditor._UpdateFilteredProducts()
         self.BatchEditor._updateFilteredBatches()
+        self.BatchEditor._updateQueueFilteredBatches()
 
     def Draw(self):
         if imgui.begin_tab_bar("MainTab"):
@@ -1795,6 +2085,12 @@ class MainApp:
             opened, visible = imgui.begin_tab_item("Database Editor")
             if opened:
                 self.BatchEditor.Draw()
+                imgui.end_tab_item()
+
+            # Queue Editor tab
+            opened, visible = imgui.begin_tab_item("Queue Editor")
+            if opened:
+                self.BatchEditor.DrawQueueEditor()
                 imgui.end_tab_item()
 
             imgui.end_tab_bar()

@@ -19,6 +19,8 @@ class Batch:
         self.State = state
         self.ImportedDate = dt.datetime.now()
         self.ExpirationDate: dt.datetime | None = None
+        self.DeliveryDate: dt.datetime | None = None
+        self.QueuePosition: int | None = None
 
     def SetExpirationDate(self, expirationDate: dt.datetime):
         self.ExpirationDate = expirationDate
