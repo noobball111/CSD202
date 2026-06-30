@@ -37,6 +37,7 @@ class Queue:
         self.size -= 1
         return val
 
+    # DO NOT CALL
     def RemoveByAttribute(self, attr, val):
         """Remove the first node where getattr(node.val, attr) == val"""
         if self.size == 0:
@@ -68,6 +69,9 @@ class Queue:
         
         return True
 
+    # This method is optimized to not lag with large queues by using binary search on the sorted queue.
+    # Should not be used on unsorted queues, as it will not work correctly.
+    # Probably not needed, but just in case, we can add a check to see if the queue is sorted by the date attribute.
     def RemoveByClosestDate(self, target_date: dt.datetime, date_attr: str = "ExpirationDate"):
         """Find and remove the node with the closest date to target_date.
         This is optimized to not lag with large queues by using binary search on the sorted queue."""
