@@ -1,3 +1,4 @@
+import calendar
 import copy
 import re
 import time
@@ -1169,14 +1170,15 @@ class BatchEditor:
             return
         upc_list = list(self.StorageManager.Products.keys())
         states = ["Good", "ToBeReviewed"]
+        max_days = max(0, count // 2)
+        now = dt.datetime.now()
         for i in range(count):
             upc = random.choice(upc_list)
             amount = random.randint(1, 100)
             state = random.choice(states)
             batch = Batch(upc, amount, state)
-            if random.random() > 0.5:
-                delta = dt.timedelta(days=random.randint(1, 365))
-                batch.SetExpirationDate(dt.datetime.now() + delta)
+            delta_days = random.randint(0, max_days)
+            batch.SetExpirationDate(now + dt.timedelta(days=delta_days))
             self.StorageManager.AddBatch(batch)
         self.searchEngine.Rebuild()
         self._updateFilteredBatches()
@@ -1263,10 +1265,23 @@ class BatchEditor:
         self._searchResultsCount = len(self.filteredBatchIDs)
         self._searching = False
 
+    def _sortQueueBatchIDs(self, batch_ids: List[int]) -> List[int]:
+        return sorted(
+            batch_ids,
+            key=lambda bid: (
+                self.StorageManager.BatchByID[bid].ExpirationDate
+                if self.StorageManager.BatchByID[bid].ExpirationDate is not None
+                else dt.datetime.max,
+                self.StorageManager.BatchByID[bid].ImportedDate,
+                bid,
+            ),
+        )
+
     def _updateQueueFilteredBatches(self):
         self._queueSearching = True
         start = time.perf_counter()
-        self.queueFilteredBatchIDs = self._filterBatches(self.queueSearchQuery)
+        batch_ids = self._filterBatches(self.queueSearchQuery)
+        self.queueFilteredBatchIDs = self._sortQueueBatchIDs(batch_ids)
         self._queueSearchTime = time.perf_counter() - start
         self._queueSearchResultsCount = len(self.queueFilteredBatchIDs)
         self._queueSearching = False
@@ -1331,24 +1346,84 @@ class BatchEditor:
         if numeric_match:
             field, op, raw_value = numeric_match.groups()
             field = field.lower()
+            if field == "expiredate":
+                field = "expirationdate"
             raw_value = raw_value.strip()
-            try:
-                if field == "amount":
+
+            def parse_date_filter(text: str):
+                if re.fullmatch(r"\d{4}", text):
+                    return "year", int(text)
+                if re.fullmatch(r"\d{4}-\d{2}", text):
+                    year, month = text.split("-")
+                    return "month", int(year), int(month)
+                try:
+                    return "date", dt.datetime.fromisoformat(text)
+                except ValueError:
+                    return None
+
+            if field == "amount":
+                try:
                     value = int(raw_value)
-                elif field in ("importeddate", "expirationdate"):
-                    # Support ISO date comparisons for batch date fields.
-                    value = dt.datetime.fromisoformat(raw_value).timestamp()
+                except ValueError:
+                    return set()
+                return self.StorageManager.GetBatchIDsByNumericComparison(field, op, value)
+
+            if field in ("importeddate", "expirationdate"):
+                parsed = parse_date_filter(raw_value)
+                if parsed is None:
+                    return set()
+                attr_name = "ImportedDate" if field == "importeddate" else "ExpirationDate"
+                if parsed[0] == "date":
+                    date_value = parsed[1]
+                    if op in ("=", "==") and "T" not in raw_value and len(raw_value) <= 10:
+                        target_date = date_value.date()
+                        return {
+                            batch_id
+                            for batch_id, batch in self.StorageManager.BatchByID.items()
+                            if getattr(batch, attr_name) is not None and getattr(batch, attr_name).date() == target_date
+                        }
+                    value = self.StorageManager._dateToNumeric(date_value)
+                    return self.StorageManager.GetBatchIDsByNumericComparison(field, op, value)
+                if parsed[0] == "year":
+                    year = parsed[1]
+                    if op in ("=", "=="):
+                        return {
+                            batch_id
+                            for batch_id, batch in self.StorageManager.BatchByID.items()
+                            if getattr(batch, attr_name) is not None and getattr(batch, attr_name).year == year
+                        }
+                    start = dt.datetime(year, 1, 1)
+                    end = dt.datetime(year, 12, 31, 23, 59, 59, 999999)
                 else:
-                    value = float(raw_value)
-            except (ValueError, TypeError):
+                    year, month = parsed[1], parsed[2]
+                    if op in ("=", "=="):
+                        return {
+                            batch_id
+                            for batch_id, batch in self.StorageManager.BatchByID.items()
+                            if getattr(batch, attr_name) is not None
+                            and getattr(batch, attr_name).year == year
+                            and getattr(batch, attr_name).month == month
+                        }
+                    last_day = calendar.monthrange(year, month)[1]
+                    start = dt.datetime(year, month, 1)
+                    end = dt.datetime(year, month, last_day, 23, 59, 59, 999999)
+                if op == "<":
+                    return self.StorageManager.GetBatchIDsByNumericComparison(field, op, self.StorageManager._dateToNumeric(start))
+                if op == "<=":
+                    return self.StorageManager.GetBatchIDsByNumericComparison(field, op, self.StorageManager._dateToNumeric(end))
+                if op == ">":
+                    return self.StorageManager.GetBatchIDsByNumericComparison(field, op, self.StorageManager._dateToNumeric(end))
+                if op == ">=":
+                    return self.StorageManager.GetBatchIDsByNumericComparison(field, op, self.StorageManager._dateToNumeric(start))
                 return set()
-            return self.StorageManager.GetBatchIDsByNumericComparison(field, op, value)
 
         # Exact numeric field match using colon syntax
         field_exact_match = re.match(r"^([a-zA-Z_][\w]*):(.*)$", keyword)
         if field_exact_match:
             field, raw_value = field_exact_match.groups()
             field = field.lower()
+            if field == "expiredate":
+                field = "expirationdate"
             raw_value = raw_value.strip()
             if field == "amount":
                 try:
@@ -1357,11 +1432,33 @@ class BatchEditor:
                 except ValueError:
                     pass
             if field in ("importeddate", "expirationdate"):
-                try:
-                    value = dt.datetime.fromisoformat(raw_value).timestamp()
-                    return self.StorageManager.GetBatchIDsByNumericComparison(field, "=", value)
-                except ValueError:
-                    pass
+                parsed = parse_date_filter(raw_value)
+                if parsed is None:
+                    return set()
+                attr_name = "ImportedDate" if field == "importeddate" else "ExpirationDate"
+                if parsed[0] == "date":
+                    date_value = parsed[1]
+                    target_date = date_value.date()
+                    return {
+                        batch_id
+                        for batch_id, batch in self.StorageManager.BatchByID.items()
+                        if getattr(batch, attr_name) is not None and getattr(batch, attr_name).date() == target_date
+                    }
+                if parsed[0] == "year":
+                    year = parsed[1]
+                    return {
+                        batch_id
+                        for batch_id, batch in self.StorageManager.BatchByID.items()
+                        if getattr(batch, attr_name) is not None and getattr(batch, attr_name).year == year
+                    }
+                year, month = parsed[1], parsed[2]
+                return {
+                    batch_id
+                    for batch_id, batch in self.StorageManager.BatchByID.items()
+                    if getattr(batch, attr_name) is not None
+                    and getattr(batch, attr_name).year == year
+                    and getattr(batch, attr_name).month == month
+                }
 
         if keyword in self.StorageManager.BatchKeywordIndex:
             batch_ids.update(self.StorageManager.BatchKeywordIndex[keyword])

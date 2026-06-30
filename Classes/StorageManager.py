@@ -141,9 +141,10 @@ class   StorageManager:
 
     def _setBatchQueueDates(self, batch, position: int):
         batch.QueuePosition = position
-        QueueDate = batch.ImportedDate + dt.timedelta(days=position)
-        batch.ExpirationDate = QueueDate
-        batch.DeliveryDate = QueueDate
+        queue_date = batch.ImportedDate + dt.timedelta(days=position)
+        if batch.ExpirationDate is None:
+            batch.ExpirationDate = queue_date
+        batch.DeliveryDate = queue_date
 
     def _rebuildBatchQueue(self):
         if not self.BatchQueue:
@@ -151,7 +152,10 @@ class   StorageManager:
 
         SortedQueue = sorted(
             self.BatchQueue,
-            key=lambda bid: self.BatchByID[bid].QueuePosition if self.BatchByID[bid].QueuePosition is not None else self._dateToNumeric(self.BatchByID[bid].ImportedDate)
+            key=lambda bid: (
+                self.BatchByID[bid].ExpirationDate if self.BatchByID[bid].ExpirationDate is not None else dt.datetime.max,
+                self.BatchByID[bid].ImportedDate,
+            )
         )
 
         self.BatchQueue = []
