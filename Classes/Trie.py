@@ -1,5 +1,6 @@
 from .Stack import Stack
 
+# Each node can have a list of nodes below them instead of just 1
 class Node:
     def __init__(self, val) -> None:
         self.val = val
@@ -11,6 +12,7 @@ class Node:
         self.Words[val] = Node(val)
         return self.Words[val]
 
+# Trie but it's specifically for the autocomplete
 class Trie:
     def __init__(self) -> None:
         self.Head = Node(None)
